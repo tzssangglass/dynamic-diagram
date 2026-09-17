@@ -1,0 +1,120 @@
+{
+  "header": "REQUEST PATH ·· CLIENT → LB → 2×SERVICE → BACK",
+  "duration": 8000,
+  "nodes": [
+    {
+      "id": "client",
+      "label": "client",
+      "icon": "phone",
+      "x": 8,
+      "y": 50
+    },
+    {
+      "id": "lb",
+      "label": "load balancer",
+      "icon": "shuffle",
+      "x": 40,
+      "y": 50,
+      "status": "round robin"
+    },
+    {
+      "id": "svc1",
+      "label": "service a",
+      "icon": "server",
+      "x": 84,
+      "y": 26,
+      "status": "200 OK"
+    },
+    {
+      "id": "svc2",
+      "label": "service b",
+      "icon": "server",
+      "x": 84,
+      "y": 74,
+      "status": "200 OK"
+    }
+  ],
+  "links": [
+    {
+      "from": "client",
+      "to": "lb",
+      "arrow": "end"
+    },
+    {
+      "from": "lb",
+      "to": "svc1",
+      "arrow": "end"
+    },
+    {
+      "from": "lb",
+      "to": "svc2",
+      "arrow": "end"
+    }
+  ],
+  "packets": [
+    {
+      "label": "GET /api",
+      "from": "client",
+      "to": "lb",
+      "window": [
+        0.02,
+        0.26
+      ]
+    },
+    {
+      "label": "fwd",
+      "from": "lb",
+      "to": "svc1",
+      "window": [
+        0.3,
+        0.54
+      ]
+    },
+    {
+      "label": "fwd",
+      "from": "lb",
+      "to": "svc2",
+      "window": [
+        0.34,
+        0.58
+      ]
+    },
+    {
+      "label": "resp",
+      "from": "svc1",
+      "to": "lb",
+      "window": [
+        0.58,
+        0.74
+      ]
+    },
+    {
+      "label": "resp",
+      "from": "svc2",
+      "to": "lb",
+      "window": [
+        0.62,
+        0.78
+      ]
+    },
+    {
+      "label": "200 OK",
+      "from": "lb",
+      "to": "client",
+      "window": [
+        0.8,
+        0.97
+      ]
+    }
+  ],
+  "texts": [
+    {
+      "text": "fan-out",
+      "x": 62,
+      "y": 50,
+      "dim": true
+    }
+  ],
+  "badge": "8s loop",
+  "note": "Request hits the load balancer, fans out to both services, responses merge back, and the 200 returns to the client."
+}

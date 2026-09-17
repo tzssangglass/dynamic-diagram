@@ -1,0 +1,30 @@
+{
+  "header": "SPEC EXAMPLE ·· DECLARATIVE DIAGRAM",
+  "nodes": [
+    { "id": "laptop", "label": "your laptop", "icon": "phone", "x": 10, "y": 55 },
+    { "id": "fw", "label": "firewall", "icon": "firewall", "x": 32, "y": 55 },
+    { "id": "dns", "label": "resolver", "icon": "dns", "x": 55, "y": 15 },
+    { "id": "lb", "label": "load balancer", "icon": "hexagon", "x": 55, "y": 55 },
+    { "id": "db", "label": "primary db", "icon": "database", "x": 88, "y": 30, "status": "10.0.0.5:5432" },
+    { "id": "cache", "label": "cache", "icon": "memory", "x": 88, "y": 75 },
+    { "id": "cdn", "label": "cdn edge", "icon": "cloud", "x": 32, "y": 15 }
+  ],
+  "links": [
+    { "from": "laptop", "to": "fw", "arrow": "end" },
+    { "from": "fw", "to": "lb", "arrow": "end" },
+    { "from": "fw", "to": "dns" },
+    { "from": "dns", "to": "cdn", "arrow": "both" },
+    { "from": "lb", "to": "db", "arrow": "end" },
+    { "from": "lb", "to": "cache", "arrow": "end" }
+  ],
+  "packets": [
+    { "label": "GET /api/users", "from": "laptop", "to": "lb", "progress": 0.5 },
+    { "label": "SELECT *", "from": "lb", "to": "db", "progress": 0.35 }
+  ],
+  "texts": [
+    { "text": "dmz", "x": 43, "y": 68, "dim": true },
+    { "text": "private subnet", "x": 80, "y": 90, "dim": true }
+  ],
+  "badge": "live",
+  "note": "one JSON document: icons (built-in, graphviz shapes, or any emoji), links with arrows, packets in flight."
+}
