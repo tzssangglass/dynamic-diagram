@@ -21,18 +21,25 @@ renderer bugs.
 
 ## Map
 
-- `src/spec.rs` — spec JSON → parsed plan; field semantics live here
+- `src/timeline.rs` — the universal mechanism: timeline docs (`Doc`), keyframe
+  resolution (`Tl`), `frame_at(t)` → Frame, `DocSim` (Sim adapter)
+- `src/spec.rs` — v1 spec sugar (nodes/links/packets+window) → compiled to Doc
 - `src/svg.rs` — scene → SVG; owns icon tier dispatch, geometry, fonts
-- `src/frame.rs` — the shared Frame model (`frame_at(t)`)
+- `src/frame.rs` — the static Frame model
+- `src/sims_data.rs` + `sims/*.json` — the 28 animations as data, embedded at
+  compile time (source of truth on disk; zero per-animation Rust)
 - `src/assets/` — icon tables (`material-symbols.txt` 960-grid fill paths,
   `tabler-icons.txt` 24-grid stroke, `cloud-icons.txt` full-color fragments),
   embedded fonts
-- one file per sim in `src/` (`tcp_handshake.rs` = `tcphs`, …)
 - `skills/dynamic-diagram/SKILL.md` — the agent skill (`dynamic-diagram skill`
   re-prints it; serves as the skill's own regression check)
 
 ## Gotchas
 
+- Content is data: never add per-animation Rust — new sims are timeline docs
+  in `sims/` (then a line in `src/sims_data.rs` via its generator comment)
+- No expressions in docs, ever: keyframes only (numbers lerp, strings step);
+  computed content is precomputed at authoring time
 - usvg can't parse comma font lists — fonts are single names
   (`Inconsolata`, `Liberation Sans`), embedded in `src/assets/fonts/`.
 - Material icon paths are 960×960 y-negative-up; scaling lives only in

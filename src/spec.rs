@@ -1,50 +1,41 @@
-//! The declarative spec format: a JSON document describing a diagram —
-//! nodes with icon kinds, links with arrows, packets, texts — parsed into a
-//! Frame and rendered by the same pipeline as the sims.
-//!
-//! Static spec (no "duration"): packets sit at their "progress".
-//! Animated spec ("duration": 6000): packets fly from→to inside their time
-//! window each loop; sample with frame_at(t).
-//!
-//! ```json
-//! {
-//!   "header": "MY NETWORK ·· OVERVIEW",
-//!   "duration": 6000,
-//!   "nodes": [
-//!     { "id": "client", "label": "laptop", "icon": "phone", "x": 10, "y": 50 },
-//!     { "id": "srv", "label": "app", "icon": "server", "x": 85, "y": 50, "status": "10.0.0.5" }
-//!   ],
-//!   "links": [ { "from": "client", "to": "srv", "arrow": "end" } ],
-//!   "packets": [ { "label": "GET /api", "from": "client", "to": "srv",
-//!                  "window": [0.1, 0.7] } ],
-//!   "texts": [ { "text": "dmz", "x": 60, "y": 20, "dim": true } ],
-//!   "badge": "live",
-//!   "note": "caption"
-//! }
-//! ```
+//! The v1 spec sugar: the compact AI/human-facing format (nodes with ids,
+//! links by id, packets with from/to + window). Compiled into the universal
+//! timeline Doc — `window` is literally two keyframes on travel progress.
 
 use crate::frame::*;
+use crate::timeline::*;
 use serde::Deserialize;
 use std::collections::HashMap;
 
+/// ```json
+/// {
+///   "header": "MY NETWORK ·· OVERVIEW",
+///   "duration": 6000,
+///   "nodes": [ { "id": "client", "label": "laptop", "icon": "phone", "x": 10, "y": 50 } ],
+///   "links": [ { "from": "client", "to": "srv", "arrow": "end" } ],
+///   "packets": [ { "label": "GET /api", "from": "client", "to": "srv", "window": [0.1, 0.7] } ],
+///   "texts": [ { "text": "dmz", "x": 60, "y": 20, "dim": true } ],
+///   "badge": "live", "note": "caption"
+/// }
+/// ```
 #[derive(Deserialize)]
-pub struct Spec {
-    pub duration: Option<u64>,
-    pub header: Option<String>,
+struct SpecV1 {
+    duration: Option<u64>,
+    header: Option<String>,
     #[serde(default)]
-    pub nodes: Vec<NodeD>,
+    nodes: Vec<NodeD>,
     #[serde(default)]
-    pub links: Vec<LinkD>,
+    links: Vec<LinkD>,
     #[serde(default)]
-    pub packets: Vec<PacketD>,
+    packets: Vec<PacketD>,
     #[serde(default)]
-    pub texts: Vec<TextD>,
-    pub badge: Option<String>,
-    pub note: Option<String>,
+    texts: Vec<TextD>,
+    badge: Option<String>,
+    note: Option<String>,
 }
 
 #[derive(Deserialize)]
-pub struct NodeD {
+struct NodeD {
     pub id: Option<String>,
     pub label: Option<String>,
     pub icon: Option<String>,
@@ -56,147 +47,137 @@ pub struct NodeD {
 }
 
 #[derive(Deserialize)]
-pub struct LinkD {
-    pub from: String,
-    pub to: String,
+struct LinkD {
+    from: String,
+    to: String,
     #[serde(default)]
-    pub arrow: String, // "" | "end" | "both"
+    arrow: String,
 }
 
 #[derive(Deserialize)]
-pub struct PacketD {
-    pub label: String,
-    pub from: String,
-    pub to: String,
-    #[serde(default)]
-    pub progress: Option<f64>, // static mode; absent = mid-flight
-    #[serde(default)]
-    pub faded: bool,
-    #[serde(default)]
-    pub window: Option<(f64, f64)>, // animated mode, loop fractions
-}
-
-#[derive(Deserialize)]
-pub struct TextD {
-    pub text: String,
-    pub x: f64,
-    pub y: f64,
-    #[serde(default)]
-    pub dim: bool,
-    #[serde(default)]
-    pub left: bool,
-}
-
-/// A parsed spec: layout resolved once, sampled per frame.
-pub struct ParsedSpec {
-    duration: Option<u64>,
-    header: Option<String>,
-    nodes: Vec<NodeSpec>,
-    links: Vec<(f64, f64, f64, f64, bool)>, // x1,y1,x2,y2,arrow_end
-    packets: Vec<PacketPlan>,
-    texts: Vec<TextSpec>,
-    badge: Option<String>,
-    note: String,
-}
-
-struct PacketPlan {
+struct PacketD {
     label: String,
-    from: (f64, f64),
-    to: (f64, f64),
-    static_p: f64,
+    from: String,
+    to: String,
+    #[serde(default)]
+    progress: Option<f64>,
+    #[serde(default)]
     faded: bool,
-    window: (f64, f64),
+    #[serde(default)]
+    window: Option<(f64, f64)>,
 }
 
-pub fn parse(json: &str) -> Result<ParsedSpec, String> {
-    let spec: Spec = serde_json::from_str(json).map_err(|e| format!("spec parse: {e}"))?;
+#[derive(Deserialize)]
+struct TextD {
+    text: String,
+    x: f64,
+    y: f64,
+    #[serde(default)]
+    dim: bool,
+    #[serde(default)]
+    left: bool,
+}
+
+pub fn parse(json: &str) -> Result<Doc, String> {
+    let spec: SpecV1 = serde_json::from_str(json).map_err(|e| format!("spec parse: {e}"))?;
     let mut pos: HashMap<String, (f64, f64)> = HashMap::new();
+    let mut els = Vec::new();
     for (i, n) in spec.nodes.iter().enumerate() {
-        pos.insert(n.id.clone().unwrap_or_else(|| i.to_string()), (n.x, n.y));
+        let id = n.id.clone().unwrap_or_else(|| i.to_string());
+        pos.insert(id.clone(), (n.x, n.y));
+        els.push(El::Node(NodeEl {
+            id: Some(id),
+            label: n.label.clone().map(Tl::Const),
+            icon: n.icon.clone(),
+            x: Tl::Const(n.x),
+            y: Tl::Const(n.y),
+            status: n.status.clone().map(Tl::Const),
+            lifeline: n.lifeline,
+            show: None,
+        }));
     }
     let get = |k: &str| -> Result<(f64, f64), String> { pos.get(k).copied().ok_or_else(|| format!("unknown node {k:?}")) };
-
-    let links = spec
-        .links
-        .iter()
-        .map(|l| -> Result<Vec<(f64, f64, f64, f64, bool)>, String> {
-            let (a, b) = (get(&l.from)?, get(&l.to)?);
-            let end = l.arrow == "end" || l.arrow == "both";
-            let mut v = vec![(a.0, a.1, b.0, b.1, end)];
-            if l.arrow == "both" {
-                v.push((b.0, b.1, a.0, a.1, true));
+    for l in &spec.links {
+        get(&l.from)?;
+        get(&l.to)?;
+        els.push(El::Line(LineEl {
+            from: Some(l.from.clone()),
+            to: Some(l.to.clone()),
+            x1: None,
+            y1: None,
+            x2: None,
+            y2: None,
+            arrow_end: l.arrow == "end" || l.arrow == "both",
+            show: None,
+        }));
+        if l.arrow == "both" {
+            els.push(El::Line(LineEl {
+                from: Some(l.to.clone()),
+                to: Some(l.from.clone()),
+                x1: None,
+                y1: None,
+                x2: None,
+                y2: None,
+                arrow_end: true,
+                show: None,
+            }));
+        }
+    }
+    for (i, p) in spec.packets.iter().enumerate() {
+        let (a, b) = (get(&p.from)?, get(&p.to)?);
+        let p_tl = match (spec.duration, p.window) {
+            (Some(d), Some((w0, w1))) => {
+                let (w0, w1) = (w0.clamp(0.0, 1.0), w1.clamp(0.0, 1.0));
+                Tl::Keyed(vec![
+                    (0, 0.0),
+                    ((w0 * d as f64) as u64, 0.0),
+                    ((w1 * d as f64) as u64, 1.0),
+                    (d, 1.0),
+                ])
             }
-            Ok(v)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .flatten()
-        .collect();
-
-    let packets = spec
-        .packets
-        .iter()
-        .enumerate()
-        .map(|(i, p)| -> Result<PacketPlan, String> {
-            let (a, b) = (get(&p.from)?, get(&p.to)?);
-            let window = p.window.unwrap_or((
-                (0.06 + i as f64 * 0.06).min(0.5),
-                (0.55 + i as f64 * 0.06).min(0.92),
-            ));
-            Ok(PacketPlan { label: p.label.clone(), from: a, to: b, static_p: p.progress.unwrap_or(0.5).clamp(0.0, 1.0), faded: p.faded, window })
-        })
-        .collect::<Result<_, _>>()?;
-
-    Ok(ParsedSpec {
+            (Some(_), None) => {
+                // staggered default windows, matching the original semantics
+                let w0 = (0.06 + i as f64 * 0.06).min(0.5);
+                let w1 = (0.55 + i as f64 * 0.06).min(0.92);
+                let d = spec.duration.unwrap();
+                Tl::Keyed(vec![
+                    (0, 0.0),
+                    ((w0 * d as f64) as u64, 0.0),
+                    ((w1 * d as f64) as u64, 1.0),
+                    (d, 1.0),
+                ])
+            }
+            (None, _) => Tl::Const(p.progress.unwrap_or(0.5).clamp(0.0, 1.0)),
+        };
+        els.push(El::Packet(PacketEl {
+            label: p.label.clone(),
+            x1: Tl::Const(a.0),
+            y1: Tl::Const(a.1),
+            x2: Tl::Const(b.0),
+            y2: Tl::Const(b.1),
+            p: p_tl,
+            landed: Tl::Const(p.faded),
+            show: None,
+        }));
+    }
+    for t in &spec.texts {
+        els.push(El::Text(TextEl {
+            text: Tl::Const(t.text.clone()),
+            x: Tl::Const(t.x),
+            y: Tl::Const(t.y),
+            dim: Tl::Const(t.dim),
+            left: t.left,
+            show: None,
+        }));
+    }
+    Ok(Doc {
         duration: spec.duration,
-        header: spec.header,
-        nodes: spec
-            .nodes
-            .into_iter()
-            .map(|n| NodeSpec { label: n.label.unwrap_or_default(), x: n.x, y: n.y, status: n.status, lifeline: n.lifeline, icon: n.icon })
-            .collect(),
-        links,
-        packets,
-        texts: spec.texts.into_iter().map(|t| TextSpec { text: t.text, x: t.x, y: t.y, dim: t.dim, left: t.left }).collect(),
-        badge: spec.badge,
-        note: spec.note.unwrap_or_default(),
+        header: spec.header.map(Tl::Const),
+        badge: spec.badge.map(Tl::Const),
+        note: spec.note.map(Tl::Const),
+        els,
     })
 }
 
-impl ParsedSpec {
-    pub fn duration(&self) -> Option<u64> {
-        self.duration
-    }
-
-    /// sample the animation at time t (ms); t=0 for the static frame
-    pub fn frame_at(&self, t: u64) -> Frame {
-        let frac = self
-            .duration
-            .map(|d| (t % d) as f64 / d as f64)
-            .unwrap_or(0.0);
-        let packets = self
-            .packets
-            .iter()
-            .map(|p| {
-                let prog = if self.duration.is_some() {
-                    let (w0, w1) = p.window;
-                    ((frac - w0) / (w1 - w0).max(1e-6)).clamp(0.0, 1.0)
-                } else {
-                    p.static_p
-                };
-                PacketSpec { label: p.label.clone(), x1: p.from.0, y1: p.from.1, x2: p.to.0, y2: p.to.1, p: prog, landed: p.faded }
-            })
-            .collect();
-        Frame {
-            header: self.header.clone(),
-            nodes: self.nodes.clone(),
-            packets,
-            trails: self.links.iter().map(|(x1, y1, x2, y2, a)| TrailSpec { x1: *x1, y1: *y1, x2: *x2, y2: *y2, arrow_end: *a }).collect(),
-            texts: self.texts.clone(),
-            polylines: vec![],
-            paths: vec![],
-            badge: self.badge.clone(),
-            note: self.note.clone(),
-        }
-    }
-}
+#[allow(dead_code)]
+fn _frame_compat(_: &Frame) {}

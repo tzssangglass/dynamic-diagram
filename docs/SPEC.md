@@ -40,6 +40,44 @@ mode without `window` assigns staggered defaults (`0.06+0.06i → 0.55+0.06i`).
 Packets at fraction ≤ 0.02 or ≥ 0.98 on a real travel path are not drawn
 (resting at an endpoint would stack the label onto the node).
 
+## Universal timeline format (v2)
+
+Below the v1 sugar sits one universal mechanism: **elements whose properties
+are timelines**. Any property accepts either a constant or `[[t, v], ...]`
+keyframes — numbers/points interpolate linearly between keys, strings/bools
+hold until the next key. No expressions, ever.
+
+```json
+{
+  "duration": 9000,
+  "els": [
+    { "type": "node", "id": "gw", "label": "router", "icon": "router",
+      "x": 50, "y": 40,
+      "status": [[0, "down"], [3000, "up"]],
+      "show": [[0, false], [1500, true]] },
+    { "type": "line", "x1": 10, "y1": 40, "x2": 50, "y2": 40, "arrow_end": true },
+    { "type": "packet", "label": "GET", "x1": 10, "y1": 40, "x2": 50, "y2": 40,
+      "p": [[0, 0], [1500, 0], [4000, 1]] },
+    { "type": "text", "text": [[0, "connecting…"], [3000, "online"]], "x": 50, "y": 60 },
+    { "type": "polyline", "points": [0, 50, 25, 20, 50, 50], "dim": false,
+      "slice": [0, 3] },
+    { "type": "path", "d": "M…" }
+  ],
+  "badge": [[0, "…"], [9000, "…"]],
+  "note": "caption"
+}
+```
+
+- Element kinds: `node` (icon/label/status/lifeline), `line` (coords or
+  `from`/`to` node ids — id endpoints track moving nodes), `packet` (label +
+  flight geometry + `p` progress timeline + `landed`), `text`, `polyline`
+  (flat points array, optional moving `slice` [from,to) for reveals), `path`.
+- `show` (step timeline of bool) on any element; `""` in a string timeline
+  means absent (status/badge/note).
+- v1 `window: [w0, w1]` is literally two keyframes on `p`; the compiler emits
+  `[[0,0],[w0·D,0],[w1·D,1],[D,1]]`.
+- The 28 built-in sims are v2 documents (`sims/*.json`, embedded at build).
+
 ## Output modes
 
 ```

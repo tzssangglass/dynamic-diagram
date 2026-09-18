@@ -46,17 +46,19 @@ Coordinates are 0..100 scene space. `status` = badge under a node; `arrow` =
 ## Architecture
 
 ```
-spec JSON ──┐
-            ├─→ Frame (pure data) ─→ SVG string ─┬─→ browser (web mode)
-sims (28) ───┘                                   ├─→ PNG (in-process resvg, 30fps)
-                                                 └─→ kitty terminal protocol
+timeline docs (sims/*.json, embedded at build) ─┐
+spec JSON (v1 sugar) ───────────────────────────┼─→ Doc ─→ Frame(t) ─→ SVG ─┬─→ browser
+                                                └─→ keyframes resolve      ├─→ PNG (resvg, 30fps)
+                                                                          └─→ kitty protocol
 ```
 
-- A sim is a pure function `frame(t_ms) -> Frame` — deterministic, no DOM.
-- `Frame` = nodes (label/icon/status), packets (from/to/progress), links with
-  arrows, texts, polylines (waveforms), raw SVG paths (maps), badge, note.
-- Renderers: `src/svg.rs` (SVG), `src/kitty.rs` (terminal pixels). Rasterization
-  is in-process (`resvg`), no subprocess.
+- **One universal mechanism**: a scene is elements whose properties are
+  time-lines (constants or keyframes; numbers lerp, strings step). `frame_at(t)`
+  resolves a doc into a static Frame — no per-animation code anywhere.
+- The 28 network sims (TCP handshake, DNS, QUIC, BGP, …) are pure data in
+  `sims/`, embedded into the binary at compile time (self-contained, any cwd).
+- Renderers: `src/svg.rs` (SVG), `src/kitty.rs` (terminal pixels).
+  Rasterization is in-process (`resvg`), no subprocess.
 
 ## Run
 
@@ -73,16 +75,15 @@ cargo build --release
 ./target/release/dynamic-diagram skill      # print the agent authoring skill
 ```
 
-## Sims (28)
+## Sims (28) — data, not code
 
 tcphs (default) · encap · arp · modem · vpn · ipbits · checksum · bgp · certchain ·
 tcpvsudp · anycast · dialup · dh · routerhop · switchlearn · mtu · tls · tcpsim ·
 igp · wdm · nat · dns · bandwidth · telegraph · netsim · msgjourney · linkclick · quic
 
-Faithful ports of the original components — timing constants, captions, and
-geometry extracted from the built JS. Simplifications noted per module
-(interactive selectors fixed to defaults; stochastic sims replayed with the
-original seeded PRNGs).
+Each is a timeline document in `sims/<name>.json` (embedded at build).
+Faithful ports of the original site — timing, captions, geometry preserved;
+simplifications noted in the docs
 
 Icon data © Google, Apache 2.0 (src/assets/icons.rs).
 

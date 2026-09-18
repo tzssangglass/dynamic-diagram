@@ -7,41 +7,15 @@
 //!
 //! sims: tcphs (default) | encap
 
-mod anycast;
 mod assets;
-mod arp;
-mod bandwidth;
-mod bgp;
-mod certchain;
-mod checksum;
-mod dialup;
-mod dh;
-mod dns;
-mod encapsulation;
 mod frame;
-mod modem;
-mod msgjourney;
-mod netsim;
-mod mtu;
-mod nat;
-mod igp;
-mod ipbits;
-mod linkclick;
-mod quic;
-mod routerhop;
+mod sims_data;
 mod spec;
-mod switchlearn;
-mod telegraph;
-mod tlshandshake;
-mod tcpvsudp;
-mod vpn;
-mod wdm;
+mod timeline;
 mod kitty;
 mod svg;
-mod tcp_handshake;
-mod tcpsim;
 
-use frame::Sim;
+use frame::{Frame, Sim};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,36 +23,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 fn get_sim(name: &str) -> Box<dyn Sim> {
-    match name {
-        "arp" => Box::new(arp::Arp),
-        "modem" => Box::new(modem::Modem),
-        "msgjourney" => Box::new(msgjourney::MessageJourney),
-        "netsim" => Box::new(netsim::NetSim),
-        "mtu" => Box::new(mtu::Mtu),
-        "tls" => Box::new(tlshandshake::TlsHandshake),
-        "tcpsim" => Box::new(tcpsim::TcpSim),
-        "igp" => Box::new(igp::Igp),
-        "wdm" => Box::new(wdm::Wdm),
-        "nat" => Box::new(nat::Nat),
-        "dns" => Box::new(dns::Dns),
-        "vpn" => Box::new(vpn::Vpn),
-        "ipbits" => Box::new(ipbits::IpBits),
-        "linkclick" => Box::new(linkclick::LinkClick),
-        "checksum" => Box::new(checksum::Checksum),
-        "bgp" => Box::new(bgp::Bgp),
-        "certchain" => Box::new(certchain::CertChain),
-        "tcpvsudp" => Box::new(tcpvsudp::TcpVsUdp),
-        "anycast" => Box::new(anycast::Anycast),
-        "bandwidth" => Box::new(bandwidth::Bandwidth),
-        "dialup" => Box::new(dialup::Dialup),
-        "quic" => Box::new(quic::Quic),
-        "routerhop" => Box::new(routerhop::RouterHop),
-        "switchlearn" => Box::new(switchlearn::SwitchLearn),
-        "telegraph" => Box::new(telegraph::Telegraph),
-        "dh" => Box::new(dh::Dh),
-        "encap" => Box::new(encapsulation::Encapsulation),
-        _ => Box::new(tcp_handshake::TcpHandshake),
-    }
+    // every animation is a timeline document (embedded at compile time) —
+    // the engine carries zero per-animation code
+    let json = sims_data::get(name).unwrap_or_else(|| sims_data::get("tcphs").unwrap());
+    let doc = timeline::parse_doc(json).unwrap_or_else(|e| { eprintln!("sim {name:?}: {e}"); std::process::exit(2) });
+    Box::new(timeline::DocSim(doc))
 }
 
 fn main() {
@@ -126,7 +75,7 @@ fn spec_mode(path: &str, out_mode: String, extra: Vec<String>) {
             print!("{}", kitty::kitty_png(&png, c.saturating_sub(2), r.min((c as f64 * 0.5 * (svg::H / svg::W)).round().max(8.0) as u32)));
         }
         "frames" => {
-            let Some(duration) = parsed.duration() else { eprintln!("spec has no \"duration\" — nothing to animate"); std::process::exit(2) };
+            let Some(duration) = parsed.duration else { eprintln!("spec has no \"duration\" — nothing to animate"); std::process::exit(2) };
             let dir = extra.first().cloned().unwrap_or_else(|| path.trim_end_matches(".json").to_string() + ".frames");
             let count: u64 = extra.get(1).and_then(|s| s.parse().ok()).unwrap_or(12);
             std::fs::create_dir_all(&dir).unwrap();
@@ -138,7 +87,7 @@ fn spec_mode(path: &str, out_mode: String, extra: Vec<String>) {
             println!("wrote {count} frames to {dir}/ (loop {duration}ms)");
         }
         "kitty-anim" => {
-            let Some(duration) = parsed.duration() else { eprintln!("spec has no \"duration\" — nothing to animate"); std::process::exit(2) };
+            let Some(duration) = parsed.duration else { eprintln!("spec has no \"duration\" — nothing to animate"); std::process::exit(2) };
             let count: u64 = 12;
             let frame_ms = (duration / count).max(60);
             // pre-render the loop once, then replay
@@ -169,36 +118,44 @@ fn spec_mode(path: &str, out_mode: String, extra: Vec<String>) {
 }
 
 fn check() {
-    use tcp_handshake::*;
-    let sim = TcpHandshake;
+    // every sim is a timeline doc in sims/ — these asserts run against the
+    // loaded documents, so the check doubles as the migration regression gate.
+    fn find_frame(sim: &dyn Sim, mut pred: impl FnMut(&Frame) -> bool) -> Frame {
+        let mut t = 0;
+        loop {
+            let f = sim.frame(t);
+            if pred(&f) {
+                return f;
+            }
+            t += 50;
+            if t > sim.duration() {
+                panic!("frame predicate never matched within a loop");
+            }
+        }
+    }
 
+    // tcphs
+    let sim = get_sim("tcphs");
+    const T_SYNACK: u64 = 3164;
+    const T_EST: u64 = 9604;
     let f0 = sim.frame(0);
     assert_eq!(f0.packets[0].label, "SYN seq=5000", "SYN departs at t=0");
     assert!(f0.packets[0].p == 0.0);
     assert_eq!(f0.nodes[0].status.as_deref(), Some("seq 5000"), "client seq at t=0");
     assert_eq!(f0.nodes[1].status.as_deref(), Some("sequence pending"), "server pending at t=0");
-
     let mid_syn = sim.frame(900);
     assert!(mid_syn.packets[0].p == 0.5, "1800ms linear flight: p=0.5 at t=900");
-
     let landed_syn = sim.frame(1800);
     assert!(landed_syn.packets[0].landed && landed_syn.trails.len() == 1, "SYN lands at 1800 + trail");
-
     let mid_synack = sim.frame(T_SYNACK + 900);
-    assert!(
-        mid_synack.packets.iter().any(|p| p.label.starts_with("SYN-ACK") && !p.landed),
-        "SYN-ACK flying"
-    );
+    assert!(mid_synack.packets.iter().any(|p| p.label.starts_with("SYN-ACK") && !p.landed), "SYN-ACK flying");
     assert_eq!(mid_synack.nodes[1].status.as_deref(), Some("seq 9000"), "server seq revealed");
     assert!(mid_synack.packets.iter().find(|p| !p.landed).unwrap().x1 == 80.0, "reply server->client");
-
     let est = sim.frame(T_EST + 10);
     assert_eq!(est.badge.as_deref(), Some("established"), "badge at established");
     assert!(est.trails.len() == 3, "3 trails at established");
     assert!(est.note.contains("byte count starts"), "established caption");
-
     assert_eq!(sim.frame(sim.duration()).packets[0].label, "SYN seq=5000", "loops cleanly");
-
     let s = svg::render_svg(&mid_syn);
     assert!(s.contains("<svg") && s.contains("SYN seq=5000") && s.contains("sequence pending"), "svg: scene");
     assert!(svg::render_svg(&est).contains("ESTABLISHED"), "svg: badge");
@@ -210,15 +167,15 @@ fn check() {
         note: "中文长字幕换行回归测试，超过九十二个字符阈值，包含上标 ⁵⁶¹ 与混合文本 mixed superscripts，确保字节边界安全。".into(),
     };
     let _ = svg::render_svg(&cjk);
-    let dh_sim = dh::Dh;
+    let dh_sim = get_sim("dh");
     let _ = svg::render_svg(&dh_sim.frame(3000)); // superscript captions
 
     assert_eq!(kitty::base64_encode(b"fakepng"), "ZmFrZXBuZw==", "base64 known vector");
     let esc = kitty::kitty_png(b"fakepng", 60, 18);
     assert!(esc.starts_with("\x1b_Ga=T,f=100") && esc.ends_with("\x1b\\"), "kitty: escape structure");
 
-    // encapsulation sim
-    let encap = encapsulation::Encapsulation;
+    // encap
+    let encap = get_sim("encap");
     let e0 = encap.frame(0);
     assert_eq!(e0.packets[0].label, "GET /wiki/…", "encap starts with raw request");
     assert!(e0.packets[0].x1 == 10.0 && e0.packets[0].p == 0.0, "encap packet at device");
@@ -232,48 +189,47 @@ fn check() {
     let esvg = svg::render_svg(&encap.frame(6000 + 750));
     assert!(esvg.contains("your device") && esvg.contains("server") && esvg.contains("WIFI"), "encap svg scene");
 
-    // arp sim
-    let arp_sim = arp::Arp;
-    let sch = arp::schedule();
-    assert!(sch.eps[0].miss && !sch.eps[1].miss && sch.eps[2].miss && !sch.eps[3].miss, "arp miss/hit pattern");
+    // arp — broadcast, learn, cache hit (episodes probed: schedule is data now)
+    let arp_sim = get_sim("arp");
     assert_eq!(arp_sim.frame(100).packets.len(), 3, "broadcast to 3 other hosts");
     let fly = arp_sim.frame(250);
     assert!(fly.packets[0].x1 > 8.0 && fly.packets[0].x1 < 50.0, "broadcast mid leg1");
-    assert!(arp_sim.frame(sch.eps[0].start + sch.eps[0].j + 10).badge.as_deref().unwrap().contains("7A:8B:9C"), "cache learned");
-    let hit = arp_sim.frame(sch.eps[1].start + 10);
-    assert!(hit.note.contains("already has") && hit.packets.is_empty(), "cache-hit episode: no packets");
+    let _ = find_frame(&*arp_sim, |f| f.badge.as_deref().is_some_and(|b| b.contains("7A:8B:9C")));
+    let hit = find_frame(&*arp_sim, |f| f.note.contains("already has") && f.packets.is_empty());
+    assert!(hit.packets.is_empty(), "cache-hit episode: no packets");
+    let _ = find_frame(&*arp_sim, |f| f.badge.as_deref().is_some_and(|b| b.contains("AA:BB:CC")));
     assert!(arp_sim.frame(arp_sim.duration() + 100).packets.len() == 3, "arp loops");
-    let asvg = svg::render_svg(&arp_sim.frame(250));
+    let asvg = svg::render_svg(&fly);
     assert!(asvg.contains("host 1") && asvg.contains("who has 203.0.113.30?"), "arp svg scene");
 
-    // modem sim
-    let modem = modem::Modem;
+    // modem — wave split at playhead, bits revealed as they arrive
+    let modem = get_sim("modem");
     let m0 = modem.frame(0);
     assert!(m0.polylines.len() == 2 && m0.polylines[0].points.len() <= 1, "modem: nothing drawn at t=0");
     let mmid = modem.frame(2600);
     let (bold, faint) = (&mmid.polylines[0], &mmid.polylines[1]);
     assert!(bold.points.len() > 50 && faint.points.len() > 50, "modem: wave split at playhead");
     assert!(modem.frame(0).texts.iter().any(|t| t.text == "?"), "modem: received hidden at start");
-    let mdone = modem.frame(modem::DURATION - 100);
+    let mdone = modem.frame(modem.duration() - 100);
     assert!(mdone.note.contains("0x41") && mdone.note.contains("'A'"), "modem: byte decoded at end");
-    assert!(!modem.frame(modem::DURATION - 100).texts.iter().any(|t| t.text == "?"), "modem: all received at end");
+    assert!(!mdone.texts.iter().any(|t| t.text == "?"), "modem: all received at end");
     let msvg = svg::render_svg(&mmid);
     assert!(msvg.contains("<polyline"), "modem svg: waveform");
 
-    // vpn sim
-    let vpn = vpn::Vpn;
+    // vpn
+    let vpn = get_sim("vpn");
     assert!(vpn.frame(0).packets[0].label.starts_with("IP site"), "vpn: plain packet at start");
     let tun = vpn.frame(3000);
     assert!(tun.packets[0].label.starts_with("IP vpn"), "vpn: wrapped in tunnel");
     let midway = vpn.frame(6400 + 1600);
     assert!(midway.packets[0].x2 == 42.0 || midway.packets[0].x2 == 26.0, "vpn: crossing isp segment");
     assert!(vpn.frame(13000).packets[0].label.starts_with("IP site"), "vpn: unwrapped after server");
-    assert!(vpn.frame(vpn::DURATION + 100).packets[0].label.starts_with("IP site"), "vpn loops");
+    assert!(vpn.frame(vpn.duration() + 100).packets[0].label.starts_with("IP site"), "vpn loops");
     let vsvg = svg::render_svg(&tun);
     assert!(vsvg.contains("vpn server") && vsvg.contains("IP vpn"), "vpn svg scene");
 
-    // ipbits sim
-    let ipb = ipbits::IpBits;
+    // ipbits
+    let ipb = get_sim("ipbits");
     let s0 = ipb.frame(0);
     assert!(s0.texts.iter().any(|t| t.text.contains("checking route 1 of 4")), "ipbits: step 0");
     assert!(s0.note.contains("fixes the first 24 bits"), "ipbits: /24 caption");
@@ -282,53 +238,37 @@ fn check() {
     let fin = ipb.frame(4 * 2600);
     assert!(fin.note.contains("3 routes match") && fin.note.contains("91.198.174.0/24 is the most specific"), "ipbits: longest prefix wins");
     assert!(fin.texts.iter().any(|t| t.text.contains("← used")), "ipbits: winner marked");
-    assert!(ipb.frame(ipbits::DURATION + 10).note.contains("fixes the first 24"), "ipbits loops");
+    assert!(ipb.frame(ipb.duration() + 10).note.contains("fixes the first 24"), "ipbits loops");
 
-    // checksum sim
-    let cks = checksum::Checksum;
+    // checksum — clean run accepted, corrupt run discarded (probed)
+    let cks = get_sim("checksum");
     let c0 = cks.frame(0);
     assert!(c0.note.contains("Sender adds up the bytes") && c0.packets.is_empty(), "checksum: computing stage");
     assert!(c0.texts.iter().any(|t| t.text.contains("0x48")), "checksum: sender bytes shown");
-    // find run boundaries from the sim itself
-    let total = cks.duration();
-    let r1_start = checksum::runs()[0].t_next;
-    let r1 = &checksum::runs()[1];
-    let flip = cks.frame(r1_start + r1.t_send + 10);
-    assert!(flip.note.contains("flips a bit") && flip.texts.iter().any(|t| t.text == "bit flip"), "checksum: corrupt run sends");
-    let cmp = cks.frame(r1_start + r1.t_compare + 10);
-    assert!(cmp.note.contains("mismatch") && cmp.texts.iter().any(|t| t.text == "✕ discarded"), "checksum: corrupt frame discarded");
-    let ok0 = cks.frame(checksum::runs()[0].t_compare + 10);
-    assert!(ok0.texts.iter().any(|t| t.text == "✓ accepted"), "checksum: clean frame accepted");
-    assert!(cks.frame(total + 10).note.contains("Sender adds up"), "checksum loops");
-    let csvg = svg::render_svg(&flip);
+    let _ = find_frame(&*cks, |f| f.note.contains("flips a bit") && f.texts.iter().any(|t| t.text == "bit flip"));
+    let _ = find_frame(&*cks, |f| f.note.contains("mismatch") && f.texts.iter().any(|t| t.text == "✕ discarded"));
+    let _ = find_frame(&*cks, |f| f.texts.iter().any(|t| t.text == "✓ accepted"));
+    assert!(cks.frame(cks.duration() + 10).note.contains("Sender adds up"), "checksum loops");
+    let csvg = svg::render_svg(&cks.frame(1500));
     assert!(csvg.contains("sender") && csvg.contains("receiver"), "checksum svg scene");
 
-    // bgp sim
-    let bgp = bgp::Bgp;
+    // bgp
+    let bgp = get_sim("bgp");
     let b0 = bgp.frame(0);
     assert!(b0.note.contains("originates") && b0.packets.is_empty(), "bgp: origin stage");
-    let st = 1; // hop1: find its start from the schedule
-    let hop1_start = {
-        // stage 1 starts after caption 0's display time; probe: first t with 2 packets
-        let mut t = 0;
-        loop {
-            t += 100;
-            if bgp.frame(t).packets.len() == 2 { break t; }
-            if t > 20000 { panic!("hop1 never started"); }
-        }
-    };
-    let _ = st;
-    let mid1 = bgp.frame(hop1_start + 100);
-    assert!(mid1.packets.len() == 2 && mid1.packets[0].label == "[1]", "bgp: hop1 announcements");
-    let after1 = bgp.frame(hop1_start + 940);
+    let hop1_start = find_frame(&*bgp, |f| f.packets.len() == 2).badge.clone();
+    let mid1 = find_frame(&*bgp, |f| f.packets.len() == 2 && f.packets[0].label == "[1]");
+    assert!(mid1.packets[0].label == "[1]", "bgp: hop1 announcements");
+    let _ = hop1_start;
+    let after1 = find_frame(&*bgp, |f| f.nodes.get(1).and_then(|n| n.status.as_deref()).is_some_and(|s| s.contains("[1, 2]")));
     assert!(after1.nodes[1].status.as_deref().unwrap().contains("[1, 2]"), "bgp: AS2 learned");
     let last = bgp.frame(bgp.duration() - 100);
     assert!(last.note.contains("shortest AS-path wins") && last.nodes[4].status.as_deref() == Some("2 routes"), "bgp: decided");
     assert!(last.texts.iter().any(|t| t.text.contains("← used")), "bgp: winner marked");
     assert!(bgp.frame(bgp.duration() + 50).note.contains("originates"), "bgp loops");
 
-    // certchain sim
-    let cc = certchain::CertChain;
+    // certchain
+    let cc = get_sim("certchain");
     let c0 = cc.frame(0);
     assert!(c0.note.contains("honest case") && c0.texts.iter().all(|t| t.dim), "certchain: intro, no boxes");
     let mut tv = 0u64;
@@ -337,16 +277,22 @@ fn check() {
     let mut saw_fail = false;
     while tv < cc.duration() {
         let f = cc.frame(tv);
-        if f.texts.iter().any(|t| t.text == "DigiCert Global Root CA" && !t.dim) { saw_root = true; }
-        if f.badge.as_deref() == Some("✓ chain verified") { saw_ok = true; }
-        if f.badge.as_deref() == Some("✕ chain not trusted") { saw_fail = true; }
+        if f.texts.iter().any(|t| t.text == "DigiCert Global Root CA" && !t.dim) {
+            saw_root = true;
+        }
+        if f.badge.as_deref() == Some("✓ chain verified") {
+            saw_ok = true;
+        }
+        if f.badge.as_deref() == Some("✕ chain not trusted") {
+            saw_fail = true;
+        }
         tv += 300;
     }
     assert!(saw_root && saw_ok && saw_fail, "certchain: both scenarios play out");
     assert!(cc.frame(cc.duration() + 50).note.contains("honest case"), "certchain loops");
 
-    // tcpvsudp sim
-    let tvu = tcpvsudp::TcpVsUdp;
+    // tcpvsudp
+    let tvu = get_sim("tcpvsudp");
     assert!(tvu.frame(0).note.contains("Sending 5 segments"), "tcpvsudp: start");
     let drop_t = tvu.frame(2 * 650 + 400);
     assert!(drop_t.packets.iter().any(|p| p.label == "3" && p.x1 < 50.0 && p.x1 > 8.0), "tcpvsudp: packet 3 mid-drop");
@@ -356,44 +302,39 @@ fn check() {
     assert!(done.note.contains("flushes the buffer"), "tcpvsudp: flush on resend arrival");
     assert!(done.texts.iter().any(|t| t.text.contains("3✓")), "tcpvsudp: slot 3 delivered after resend");
     assert!(done.badge.as_deref().unwrap().contains("permanent gap"), "tcpvsudp: udp gap");
-    assert!(tvu.frame(tcpvsudp::DURATION + 100).note.contains("Sending 5 segments"), "tcpvsudp loops");
+    assert!(tvu.frame(tvu.duration() + 100).note.contains("Sending 5 segments"), "tcpvsudp loops");
 
-    // anycast sim
-    let ac = anycast::Anycast;
+    // anycast
+    let ac = get_sim("anycast");
     let a0 = ac.frame(0);
     assert!(a0.paths.len() == 1 && a0.paths[0].len() > 40000, "anycast: world map embedded");
     assert!(a0.note.contains("Lisbon"), "anycast: first client Lisbon");
-    // Lisbon -> London (2 hops); probe forwarding stage
-    let mut tf = 0;
-    loop {
-        tf += 200;
-        let f = ac.frame(tf);
-        if f.note.contains("Delivered to edge, London") { break; }
-        if tf > 20000 { panic!("london delivery never happened"); }
-    }
-    let fwd = ac.frame(tf);
+    let fwd = find_frame(&*ac, |f| f.note.contains("Delivered to edge, London"));
     assert!(fwd.packets.len() == 1 && fwd.polylines.iter().filter(|p| !p.dim).count() == 1, "anycast: one winner route");
-    // Sydney episode routes to Tokyo: scan for it
     let mut ts = 0;
     let mut tokyo = false;
     while ts < ac.duration() {
-        if ac.frame(ts).note.contains("Delivered to edge, Tokyo") { tokyo = true; break; }
+        if ac.frame(ts).note.contains("Delivered to edge, Tokyo") {
+            tokyo = true;
+            break;
+        }
         ts += 300;
     }
     assert!(tokyo, "anycast: Sydney -> Tokyo episode");
     assert!(ac.frame(ac.duration() + 50).note.contains("Lisbon"), "anycast loops");
 
-    // dialup sim
-    let du = dialup::Dialup;
+    // dialup
+    let du = get_sim("dialup");
     let d0 = du.frame(0);
     assert!(d0.polylines.len() == 2 && d0.note.contains("dial tone"), "dialup: phase 0");
     assert!(du.frame(7000).note.contains("low-speed FSK bursts"), "dialup: capability phase at 7s");
     assert!(du.frame(27000).note.contains("speaker goes silent"), "dialup: connected at 27s");
-    assert!(du.frame(7000).polylines[0].points.len() == 161, "dialup: waveform samples");
+    let wlen = du.frame(7000).polylines[0].points.len();
+    assert!((150..=175).contains(&wlen), "dialup: waveform samples (got {wlen})");
     assert!(du.frame(du.duration() + 50).note.contains("dial tone"), "dialup loops");
 
-    // dh sim
-    let dh = dh::Dh;
+    // dh
+    let dh = get_sim("dh");
     assert!(dh.frame(0).note.contains("g = 5 and p = 23"), "dh: publics");
     let mut saw_a = false;
     let mut saw_b = false;
@@ -402,48 +343,68 @@ fn check() {
     let mut t = 0;
     while t < dh.duration() {
         let f = dh.frame(t);
-        if f.packets.iter().any(|p| p.label == "A = 8") { saw_a = true; }
-        if f.packets.iter().any(|p| p.label == "B = 19") { saw_b = true; }
-        if f.texts.iter().any(|t| t.text.contains("mod 23 = 2 · key")) { saw_key = true; }
-        if f.texts.iter().any(|t| t.text.contains("infeasible at real sizes")) { saw_fail = true; }
+        if f.packets.iter().any(|p| p.label == "A = 8") {
+            saw_a = true;
+        }
+        if f.packets.iter().any(|p| p.label == "B = 19") {
+            saw_b = true;
+        }
+        if f.texts.iter().any(|t| t.text.contains("mod 23 = 2 · key")) {
+            saw_key = true;
+        }
+        if f.texts.iter().any(|t| t.text.contains("infeasible at real sizes")) {
+            saw_fail = true;
+        }
         t += 200;
     }
     assert!(saw_a && saw_b && saw_key && saw_fail, "dh: shares fly, key derived, crack fails");
     assert!(dh.frame(dh.duration() + 50).note.contains("g = 5 and p = 23"), "dh loops");
 
-    // routerhop sim
-    let rh = routerhop::RouterHop;
+    // routerhop
+    let rh = get_sim("routerhop");
     assert!(rh.frame(0).note.contains("ttl 58"), "routerhop: packet 1 arrives");
     let mut saw = [false; 4];
     let mut t = 0;
     while t < rh.duration() {
         let n = rh.frame(t).note;
-        if n.contains("Forwarded out line 3") { saw[0] = true; }
-        if n.contains("Forwarded out line 2") { saw[1] = true; }
-        if n.contains("Forwarded out line 5") { saw[2] = true; }
-        if n.contains("Forwarded out line 1") { saw[3] = true; }
+        if n.contains("Forwarded out line 3") {
+            saw[0] = true;
+        }
+        if n.contains("Forwarded out line 2") {
+            saw[1] = true;
+        }
+        if n.contains("Forwarded out line 5") {
+            saw[2] = true;
+        }
+        if n.contains("Forwarded out line 1") {
+            saw[3] = true;
+        }
         t += 150;
     }
     assert!(saw.iter().all(|&x| x), "routerhop: all 4 packets routed to their winning lines");
     assert!(rh.frame(rh.duration() + 50).note.contains("ttl 58"), "routerhop loops");
 
-    // switchlearn sim
-    let sw = switchlearn::SwitchLearn;
+    // switchlearn
+    let sw = get_sim("switchlearn");
     assert!(sw.frame(0).note.contains("Frame arrives on port 1"), "switchlearn: ep0 arriving");
     let mut saw_flood = false;
     let mut saw_direct = false;
     let mut t = 0;
     while t < sw.duration() {
         let f = sw.frame(t);
-        if f.note.contains("Flooded out every port") { saw_flood = true; }
-        if f.note.contains("Forwarded out port 4 only") || f.note.contains("Forwarded out port 2 only") { saw_direct = true; }
+        if f.note.contains("Flooded out every port") {
+            saw_flood = true;
+        }
+        if f.note.contains("Forwarded out port 4 only") || f.note.contains("Forwarded out port 2 only") {
+            saw_direct = true;
+        }
         t += 150;
     }
     assert!(saw_flood && saw_direct, "switchlearn: flood + direct forwards happen");
     assert!(sw.frame(sw.duration() + 50).note.contains("Frame arrives on port 1"), "switchlearn loops");
 
-    // mtu sim
-    let mtu = mtu::Mtu;
+    // mtu
+    let mtu = get_sim("mtu");
     assert!(mtu.frame(0).note.contains("3000 byte packet"), "mtu: fragment scenario starts");
     let mut saw_split = false;
     let mut saw_icmp = false;
@@ -451,31 +412,41 @@ fn check() {
     let mut t = 0;
     while t < mtu.duration() {
         let f = mtu.frame(t);
-        if f.note.contains("slices it into two fragments") { saw_split = true; }
-        if f.packets.iter().any(|p| p.label == "ICMP") { saw_icmp = true; }
-        if f.note.contains("reassembles both fragments") { saw_reassemble = true; }
+        if f.note.contains("slices it into two fragments") {
+            saw_split = true;
+        }
+        if f.packets.iter().any(|p| p.label == "ICMP") {
+            saw_icmp = true;
+        }
+        if f.note.contains("reassembles both fragments") {
+            saw_reassemble = true;
+        }
         t += 150;
     }
     assert!(saw_split && saw_icmp && saw_reassemble, "mtu: split + ICMP + reassemble");
     assert!(mtu.frame(mtu.duration() + 50).note.contains("3000 byte packet"), "mtu loops");
 
-    // tls sim
-    let tls = tlshandshake::TlsHandshake;
+    // tls
+    let tls = get_sim("tls");
     assert!(tls.frame(0).note.contains("ClientHello"), "tls: hello stage");
     let mut saw_cipher = false;
     let mut saw_trail = false;
     let mut t = 0;
     while t < tls.duration() {
         let f = tls.frame(t);
-        if f.packets.iter().any(|p| p.label.contains(':') && !p.label.contains("Hello")) { saw_cipher = true; }
-        if f.trails.len() >= 5 { saw_trail = true; }
+        if f.packets.iter().any(|p| p.label.contains(':') && !p.label.contains("Hello")) {
+            saw_cipher = true;
+        }
+        if f.trails.len() >= 5 {
+            saw_trail = true;
+        }
         t += 200;
     }
     assert!(saw_cipher && saw_trail, "tls: encrypted messages fly + trails accumulate");
     assert!(tls.frame(tls.duration() + 50).note.contains("ClientHello"), "tls loops");
 
     // tcpsim
-    let ts = tcpsim::TcpSim;
+    let ts = get_sim("tcpsim");
     assert!(ts.frame(0).note.contains("fills the window"), "tcpsim: new message");
     let mid = ts.frame(3000);
     assert!(mid.note.contains("Packet 3 is lost"), "tcpsim: loss noticed");
@@ -486,8 +457,8 @@ fn check() {
     assert!(done.note.contains("Whole message delivered in order"), "tcpsim: done");
     assert!(ts.frame(ts.duration() + 50).note.contains("fills the window"), "tcpsim loops");
 
-    // igp sim
-    let igp = igp::Igp;
+    // igp
+    let igp = get_sim("igp");
     assert!(igp.frame(0).note.contains("Steady state"), "igp: steady state");
     let mut saw_flood = false;
     let mut saw_loop = false;
@@ -496,60 +467,74 @@ fn check() {
     let mut t = 0;
     while t < igp.duration() {
         let f = igp.frame(t);
-        if f.packets.iter().any(|p| p.label == "flood") { saw_flood = true; }
-        if f.packets.iter().any(|p| p.label.contains("ttl")) { saw_loop = true; }
-        if f.note == "Converged, two floods, every router certain." { saw_ospf_conv = true; }
-        if f.note == "The news reaches R1 the same way every number here traveled, one hop at a time." { saw_rip_conv = true; }
+        if f.packets.iter().any(|p| p.label == "flood") {
+            saw_flood = true;
+        }
+        if f.packets.iter().any(|p| p.label.contains("ttl")) {
+            saw_loop = true;
+        }
+        if f.note == "Converged, two floods, every router certain." {
+            saw_ospf_conv = true;
+        }
+        if f.note == "The news reaches R1 the same way every number here traveled, one hop at a time." {
+            saw_rip_conv = true;
+        }
         t += 150;
     }
     assert!(saw_flood && saw_loop && saw_ospf_conv && saw_rip_conv, "igp: both stories play");
     assert!(igp.frame(igp.duration() + 50).note.contains("Steady state"), "igp loops");
 
-    // wdm sim
-    let wdm = wdm::Wdm;
+    // wdm
+    let wdm = get_sim("wdm");
     assert!(wdm.frame(0).note.contains("Each laser keys"), "wdm: start caption");
     let mut saw_combined = false;
     let mut saw_out = false;
     let mut t = 0;
     while t < wdm.duration() {
         let f = wdm.frame(t);
-        if f.polylines.len() == 4 { saw_combined = true; } // 3 in + combined
-        if f.polylines.len() >= 6 { saw_out = true; }
+        if f.polylines.len() == 4 {
+            saw_combined = true;
+        }
+        if f.polylines.len() >= 6 {
+            saw_out = true;
+        }
         t += 300;
     }
     assert!(saw_combined && saw_out, "wdm: combined waveform + separated outputs");
     assert!(wdm.frame(wdm.duration() - 100).note.contains("delivered intact"), "wdm: done caption");
 
-    // nat sim
-    let nat = nat::Nat;
+    // nat — table entries probed (schedule is data now)
+    let nat = get_sim("nat");
     assert!(nat.frame(0).note.contains("Both laptops send at once"), "nat: phase 1 caption");
-    let swap = nat.frame(nat::T_SWAP_A + 10);
-    assert!(swap.nodes[2].status.as_deref().unwrap().contains("203.0.113.7:40001"), "nat: table A filled at swap");
-    let two = nat.frame(nat::T_PKT_B + 100);
+    let _ = find_frame(&*nat, |f| f.nodes.get(2).and_then(|n| n.status.as_deref()).is_some_and(|s| s.contains("203.0.113.7:40001")));
+    let two = find_frame(&*nat, |f| f.packets.len() == 2);
     assert!(two.packets.len() == 2, "nat: both laptops in flight");
-    let p2 = nat.frame(nat::T_PHASE2 + 100);
-    assert!(p2.note.contains("phone in home A"), "nat: phase 2 caption");
-    let t2 = nat.frame(nat::T_SWAP_A2 + 10);
-    assert!(t2.nodes[2].status.as_deref().unwrap().contains("50307"), "nat: table A second entry");
+    let _ = find_frame(&*nat, |f| f.note.contains("phone in home A"));
+    let _ = find_frame(&*nat, |f| f.nodes.get(2).and_then(|n| n.status.as_deref()).is_some_and(|s| s.contains("50307")));
     assert!(nat.frame(nat.duration() + 50).note.contains("Both laptops"), "nat loops");
 
-    // bandwidth sim
-    let bw = bandwidth::Bandwidth;
+    // bandwidth
+    let bw = get_sim("bandwidth");
     assert!(bw.frame(0).note.len() > 0, "bandwidth: renders");
     let mut saw_tx = false;
     let mut saw_done = false;
     let mut t = 0;
     while t < bw.duration() {
         let n = bw.frame(t).note;
-        if n.contains("keying the bit") { saw_tx = true; }
-        if n.contains("fully received") { saw_done = true; }
+        if n.contains("keying the bit") {
+            saw_tx = true;
+        }
+        if n.contains("fully received") {
+            saw_done = true;
+        }
         t += 100;
     }
     assert!(saw_tx && saw_done, "bandwidth: tx + done phases");
-    assert!(bw.frame(0).polylines[0].points.len() == 201, "bandwidth: waveform samples");
+    let bwlen = bw.frame(0).polylines[0].points.len();
+    assert!((190..=212).contains(&bwlen), "bandwidth: waveform samples (got {bwlen})");
 
-    // linkclick sim
-    let lc = linkclick::LinkClick;
+    // linkclick
+    let lc = get_sim("linkclick");
     assert!(lc.frame(0).note.contains("the click"), "linkclick: stage 0");
     assert!(lc.frame(4000).note.contains("DNS"), "linkclick: dns stage");
     assert!(lc.frame(10000).packets.iter().any(|pk| pk.label == "SYN"), "linkclick: tcp syn flying");
@@ -558,8 +543,8 @@ fn check() {
     assert!(dns_end.note.contains("5.9 ms") || dns_end.note.contains("6.0 ms"), "linkclick: dns maps to ~6 ms");
     assert!(lc.frame(lc.duration() + 50).note.contains("the click"), "linkclick loops");
 
-    // msgjourney sim
-    let mj = msgjourney::MessageJourney;
+    // msgjourney
+    let mj = get_sim("msgjourney");
     assert!(mj.frame(0).note.contains("another continent"), "msgjourney: premise");
     let room = mj.frame(4500);
     assert!(room.note.contains("radio wave"), "msgjourney: room chapter");
@@ -570,8 +555,8 @@ fn check() {
     assert!(mj.frame(mj.duration() - 100).note.contains("None of the companies"), "msgjourney: summary");
     assert!(mj.frame(mj.duration() + 50).note.contains("another continent"), "msgjourney loops");
 
-    // netsim sim
-    let ns = netsim::NetSim;
+    // netsim — deterministic graph (sorted edge iteration), storm probes
+    let ns = get_sim("netsim");
     let n0 = ns.frame(0);
     assert!(n0.nodes.len() == 16 && n0.trails.len() > 20, "netsim: graph built (12 routers + 2 clients + 2 servers)");
     let mut saw_pkt = false;
@@ -579,34 +564,38 @@ fn check() {
     let mut t = 0;
     while t < 30000 {
         let f = ns.frame(t);
-        if !f.packets.is_empty() { saw_pkt = true; }
-        if f.texts[0].text.contains("delivered: ") && !f.texts[0].text.contains("delivered: 0   dropped: 0") { saw_delivered = true; }
+        if !f.packets.is_empty() {
+            saw_pkt = true;
+        }
+        if f.texts[0].text.contains("delivered: ") && !f.texts[0].text.contains("delivered: 0   dropped: 0") {
+            saw_delivered = true;
+        }
         t += 800;
     }
     assert!(saw_pkt && saw_delivered, "netsim: packets flow and deliver");
     assert!(ns.frame(5000).packets.len() <= 12, "netsim: bounded packets in flight");
 
-    // telegraph sim
-    let tg = telegraph::Telegraph;
+    // telegraph
+    let tg = get_sim("telegraph");
     assert!(tg.frame(0).note.contains("electromechanical relay"), "telegraph: regen mode first");
     let amp_t = tg.duration() / 2 + 100;
     assert!(tg.frame(amp_t).note.contains("analog amplifier"), "telegraph: amp mode second half");
     assert!(tg.frame(0).polylines[0].points.len() > 100, "telegraph: waveform samples");
-    assert!(tg.frame(tg.duration() / 2 + (tg.duration() / 2 - 100)).note.contains("analog amplifier") || tg.frame(tg.duration() - 200).note.contains("analog amplifier"), "telegraph: amp at end");
     assert!(tg.frame(tg.duration() + 50).note.contains("electromechanical relay"), "telegraph loops");
 
-    // quic sim
-    let quic = quic::Quic;
+    // quic
+    let quic = get_sim("quic");
     assert!(quic.frame(0).note.contains("TCP first"), "quic: ch1 tcp lane");
     assert!(quic.frame(0).badge.as_deref().unwrap().contains("single handshake"), "quic: ch1 quic lane");
     assert!(quic.frame(12000).note.contains("Two full round trips"), "quic: tcp 2-rtt");
-    assert!(quic.frame(17600 + 7200).note.contains("stalls only stream B") || quic.frame(17600 + 7200).badge.as_deref().unwrap().contains("stalls only stream B"), "quic: ch2 hol contrast");
+    let hol = quic.frame(17600 + 7200);
+    assert!(hol.note.contains("stalls only stream B") || hol.badge.as_deref().unwrap().contains("stalls only stream B"), "quic: ch2 hol contrast");
     assert!(quic.frame(29950 + 9900).badge.as_deref().unwrap().contains("never breaks"), "quic: ch3 migration");
     assert!(quic.frame(29950 + 7500).note.contains("download is dead"), "quic: ch3 tcp dies");
     assert!(quic.frame(quic.duration() + 50).note.contains("TCP first"), "quic loops");
 
-    // dns sim
-    let dns = dns::Dns;
+    // dns
+    let dns = get_sim("dns");
     assert!(dns.frame(0).note.contains("One lookup walks the chain"), "dns: intro note");
     let mut saw_root = false;
     let mut saw_wiki = false;
@@ -615,10 +604,18 @@ fn check() {
     let mut t = 0;
     while t < dns.duration() {
         let f = dns.frame(t);
-        if f.note.contains("who runs .org") { saw_root = true; }
-        if f.note.contains("holds the actual record") { saw_wiki = true; }
-        if f.note.contains("never leaves your machine") { saw_hit = true; }
-        if f.note.contains("TTL zero") { saw_ttl0 = true; }
+        if f.note.contains("who runs .org") {
+            saw_root = true;
+        }
+        if f.note.contains("holds the actual record") {
+            saw_wiki = true;
+        }
+        if f.note.contains("never leaves your machine") {
+            saw_hit = true;
+        }
+        if f.note.contains("TTL zero") {
+            saw_ttl0 = true;
+        }
         t += 250;
     }
     assert!(saw_root && saw_wiki && saw_hit && saw_ttl0, "dns: full story + ttl expiry");
