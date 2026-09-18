@@ -78,6 +78,32 @@ hold until the next key. No expressions, ever.
   `[[0,0],[w0·D,0],[w1·D,1],[D,1]]`.
 - The 28 built-in sims are v2 documents (`sims/*.json`, embedded at build).
 
+## Animation patterns (verbs)
+
+Picking a choreography is as cheap as picking an icon: one `anim` verb
+compiles to the same keyframes a hand-written window list would produce.
+Requires `duration`. Verbs override per-packet `window`s; custom stories use
+explicit windows or keyframes.
+
+| verb | choreography | fits |
+|------|--------------|------|
+| `seq` | strict relay — one packet at a time, each in its own slot | pipelines, encapsulation chains, handshakes |
+| `fanout` | halves — first half of the packet list flies out (slight ripple), second half flies back | fan-out/fan-in, request/response, load balancing |
+| `flood` | one simultaneous block | broadcasts, pub/sub |
+| `flip` | node statuses reveal in node order (state spreads); packets keep default stagger | state machines, convergence stories |
+
+```json
+{ "duration": 8000, "anim": "fanout", "nodes": [...], "packets": [
+    { "label": "GET", "from": "client", "to": "lb" },
+    { "label": "fwd", "from": "lb", "to": "a" },
+    { "label": "fwd", "from": "lb", "to": "b" },
+    { "label": "resp", "from": "a", "to": "lb" },
+    { "label": "resp", "from": "b", "to": "lb" },
+    { "label": "200", "from": "lb", "to": "client" } ] }
+```
+(see `examples/fanout.json`; unknown verbs are a parse error, `anim` without
+`duration` is a parse error)
+
 ## Output modes
 
 ```

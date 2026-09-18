@@ -1,0 +1,27 @@
+{
+  "header": "FAN-OUT ·· ONE VERB: anim = fanout",
+  "duration": 8000,
+  "anim": "fanout",
+  "nodes": [
+    { "id": "client", "label": "client", "icon": "phone", "x": 8, "y": 50 },
+    { "id": "lb", "label": "load balancer", "icon": "shuffle", "x": 40, "y": 50, "status": "round robin" },
+    { "id": "svc1", "label": "service a", "icon": "server", "x": 84, "y": 26, "status": "200 OK" },
+    { "id": "svc2", "label": "service b", "icon": "server", "x": 84, "y": 74, "status": "200 OK" }
+  ],
+  "links": [
+    { "from": "client", "to": "lb", "arrow": "end" },
+    { "from": "lb", "to": "svc1", "arrow": "end" },
+    { "from": "lb", "to": "svc2", "arrow": "end" }
+  ],
+  "packets": [
+    { "label": "GET /api", "from": "client", "to": "lb" },
+    { "label": "fwd", "from": "lb", "to": "svc1" },
+    { "label": "fwd", "from": "lb", "to": "svc2" },
+    { "label": "resp", "from": "svc1", "to": "lb" },
+    { "label": "resp", "from": "svc2", "to": "lb" },
+    { "label": "200 OK", "from": "lb", "to": "client" }
+  ],
+  "texts": [ { "text": "no windows — the verb choreographs", "x": 62, "y": 50, "dim": true } ],
+  "badge": "8s loop",
+  "note": "Same story as req-path.json, but the choreography is one verb: the packet list is [out..., back...] and 'fanout' compiles the halves. Custom timing still falls through to explicit windows or keyframes."
+}

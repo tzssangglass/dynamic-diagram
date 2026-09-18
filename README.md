@@ -81,9 +81,12 @@ tcphs (default) · encap · arp · modem · vpn · ipbits · checksum · bgp · 
 tcpvsudp · anycast · dialup · dh · routerhop · switchlearn · mtu · tls · tcpsim ·
 igp · wdm · nat · dns · bandwidth · telegraph · netsim · msgjourney · linkclick · quic
 
-Each is a timeline document in `sims/<name>.json` (embedded at build).
-Faithful ports of the original site — timing, captions, geometry preserved;
-simplifications noted in the docs
+Each is a timeline document in `sims/<name>.json` (embedded at build) — the
+**seed corpus**: regression fixtures for `check`, plus few-shot style
+references for AI-generated animations. Not a coverage library: the mechanism
+is the product, `anim` verbs + keyframes scale it (see
+`outputs/sim-library-strategy.md` for the survey behind this positioning).
+Faithful ports of the original site — timing, captions, geometry preserved.
 
 Icon data © Google, Apache 2.0 (src/assets/icons.rs).
 

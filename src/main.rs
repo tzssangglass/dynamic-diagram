@@ -621,6 +621,47 @@ fn check() {
     assert!(saw_root && saw_wiki && saw_hit && saw_ttl0, "dns: full story + ttl expiry");
     assert!(dns.frame(dns.duration() + 50).note.contains("One lookup walks"), "dns loops");
 
+    // animation pattern verbs — choreography compiled to the same keyframes
+    let mk = |anim: &str, body: &str| -> timeline::Doc {
+        let json = format!("{{\"duration\":10000,\"anim\":\"{anim}\",{body}}}");
+        spec::parse(&json).unwrap_or_else(|e| panic!("pattern {anim}: {e}"))
+    };
+    let near = |a: f64, b: f64| (a - b).abs() < 0.02;
+
+    // seq: one at a time — 3 relay slots over 10s
+    let d = mk("seq", "\"nodes\":[{\"id\":\"a\",\"x\":10,\"y\":50},{\"id\":\"b\",\"x\":50,\"y\":50},{\"id\":\"c\",\"x\":90,\"y\":50}],\"packets\":[{\"label\":\"1\",\"from\":\"a\",\"to\":\"b\"},{\"label\":\"2\",\"from\":\"b\",\"to\":\"c\"},{\"label\":\"3\",\"from\":\"c\",\"to\":\"a\"}]");
+    let f = d.frame_at(1600);
+    assert!(near(f.packets[0].p, 0.506) && f.packets[1].p == 0.0 && f.packets[2].p == 0.0, "seq: only packet 1 flying at t=1600 ({})", f.packets[0].p);
+    let f = d.frame_at(5000);
+    assert!(f.packets[0].p == 1.0 && near(f.packets[1].p, 0.61) && f.packets[2].p == 0.0, "seq: relay at t=5000");
+    let f = d.frame_at(9500);
+    assert!(f.packets.iter().all(|p| p.p == 1.0), "seq: all landed by t=9500");
+
+    // fanout: halves — first half out (ripple), second half back
+    let d = mk("fanout", "\"nodes\":[{\"id\":\"a\",\"x\":10,\"y\":50},{\"id\":\"b\",\"x\":50,\"y\":50},{\"id\":\"c\",\"x\":90,\"y\":30},{\"id\":\"d\",\"x\":90,\"y\":70}],\"packets\":[{\"label\":\"req\",\"from\":\"a\",\"to\":\"b\"},{\"label\":\"fwd\",\"from\":\"b\",\"to\":\"c\"},{\"label\":\"resp\",\"from\":\"c\",\"to\":\"b\"},{\"label\":\"ok\",\"from\":\"b\",\"to\":\"a\"}]");
+    let f = d.frame_at(800);
+    assert!(near(f.packets[0].p, 0.075) && f.packets[2].p == 0.0, "fanout: outbound only at t=800");
+    let f = d.frame_at(7000);
+    assert!(f.packets[0].p == 1.0 && near(f.packets[2].p, 0.5) && f.packets[2].x1 == 90.0, "fanout: return leg at t=7000");
+
+    // flood: one simultaneous block
+    let d = mk("flood", "\"nodes\":[{\"id\":\"a\",\"x\":10,\"y\":50},{\"id\":\"b\",\"x\":90,\"y\":20},{\"id\":\"c\",\"x\":90,\"y\":50},{\"id\":\"d\",\"x\":90,\"y\":80}],\"packets\":[{\"label\":\"q\",\"from\":\"a\",\"to\":\"b\"},{\"label\":\"q\",\"from\":\"a\",\"to\":\"c\"},{\"label\":\"q\",\"from\":\"a\",\"to\":\"d\"}]");
+    let f = d.frame_at(2000);
+    assert!(f.packets.iter().all(|p| p.p > 0.0 && p.p < 1.0), "flood: everything in flight at t=2000");
+
+    // flip: statuses reveal in node order — state spreads through the system
+    let d = mk("flip", "\"nodes\":[{\"id\":\"a\",\"x\":15,\"y\":50,\"status\":\"s1\"},{\"id\":\"b\",\"x\":50,\"y\":50,\"status\":\"s2\"},{\"id\":\"c\",\"x\":85,\"y\":50,\"status\":\"s3\"}],\"packets\":[]");
+    let f = d.frame_at(2000);
+    assert!(f.nodes[0].status.as_deref() == Some("s1") && f.nodes[1].status.is_none() && f.nodes[2].status.is_none(), "flip: only node 1 revealed at t=2000");
+    let f = d.frame_at(5000);
+    assert!(f.nodes[1].status.as_deref() == Some("s2") && f.nodes[2].status.is_none(), "flip: node 2 at t=5000");
+    let f = d.frame_at(9000);
+    assert!(f.nodes.iter().all(|n| n.status.is_some()), "flip: all revealed by t=9000");
+
+    // pattern errors
+    assert!(spec::parse("{\"anim\":\"bogus\",\"duration\":1000}").unwrap_err().contains("unknown anim"), "anim: unknown verb rejected");
+    assert!(spec::parse("{\"anim\":\"seq\",\"nodes\":[]}").unwrap_err().contains("requires"), "anim: duration required");
+
     println!("check ok");
 }
 

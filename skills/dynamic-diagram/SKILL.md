@@ -31,11 +31,12 @@ needed.
      "badge": "live", "note": "one caption line"
    }
    ```
-   For animation add `"duration": 6000` (ms per loop) and give each packet a
-   `"window": [start, end]` — loop fractions 0..1 when that packet flies.
-   Space windows so related packets overlap slightly (fan-out) but the scene
-   never has more than ~3 packets in flight. Done when `dynamic-diagram spec
-   f.json` exits 0.
+   For animation add `"duration": 6000` (ms per loop). Prefer an `anim` verb
+   over hand-tuned windows — picking a choreography is as cheap as picking an
+   icon: `seq` (one-at-a-time relay), `fanout` (out-half then back-half of the
+   packet list), `flood` (all at once), `flip` (statuses reveal in node order).
+   Only hand-write `"window": [start, end]` loop fractions when no verb fits.
+   Done when `dynamic-diagram spec f.json` exits 0.
 4. **Render and re-read.** `dynamic-diagram spec f.json` writes `f.png`;
    output modes: `svg` (stdout), `kitty` (inline to terminal), `frames <dir>
    [n]`, `kitty-anim`. Look at the PNG yourself — move nodes that collide,
