@@ -62,7 +62,13 @@ fn spec_mode(path: &str, out_mode: String, extra: Vec<String>) {
         return;
     }
     let json = std::fs::read_to_string(path).unwrap_or_else(|e| { eprintln!("read {path}: {e}"); std::process::exit(2) });
-    let parsed = spec::parse(&json).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) });
+    // one door for any scene: docs with "els" are v2 timeline documents,
+    // everything else is v1 sugar (both compile to the same Doc)
+    let parsed = if json.contains("\"els\"") {
+        timeline::parse_doc(&json).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) })
+    } else {
+        spec::parse(&json).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(2) })
+    };
     let frame_png = |t: u64| -> Vec<u8> { raster(&svg::render_svg(&parsed.frame_at(t))).unwrap() };
     let (cols, rows) = term_size();
     let fit_rows = (cols.saturating_sub(2), rows.saturating_sub(2));
@@ -661,6 +667,76 @@ fn check() {
     // pattern errors
     assert!(spec::parse("{\"anim\":\"bogus\",\"duration\":1000}").unwrap_err().contains("unknown anim"), "anim: unknown verb rejected");
     assert!(spec::parse("{\"anim\":\"seq\",\"nodes\":[]}").unwrap_err().contains("requires"), "anim: duration required");
+
+    // unified node layout: dense columns flip label/status to the side,
+    // sparse scenes keep the classic below-stack — and no label/badge/glyph
+    // rects may intersect in EITHER case
+    {
+        use svg::{plan_node_layout, NodeLayout};
+        let dense: Vec<crate::frame::NodeSpec> = (0..3)
+            .map(|i| crate::frame::NodeSpec {
+                label: format!("svc{i}"),
+                x: 88.0,
+                y: [26.0, 50.0, 74.0][i],
+                status: Some(format!("200 OK {i}")),
+                lifeline: false,
+                icon: Some("terminal".into()),
+            })
+            .collect();
+        let plans = plan_node_layout(&dense);
+        assert!(plans[0] != NodeLayout::Below && plans[1] != NodeLayout::Below, "dense column flips to side {:?}", plans);
+        // geometry: label+badge rects must not hit any glyph rect
+        let rects = |n: &crate::frame::NodeSpec, p: NodeLayout| -> Vec<(f64, f64, f64, f64)> {
+            let (x, y) = (svg::sx(n.x), svg::sy(n.y));
+            let glyph = (x - 17.0, y - 17.0, x + 17.0, y + 17.0);
+            match p {
+                NodeLayout::Below => {
+                    let mut v = vec![glyph];
+                    if !n.label.is_empty() {
+                        v.push((x - 40.0, y + 18.0, x + 40.0, y + 32.0));
+                    }
+                    if let Some(s) = &n.status {
+                        let bw = s.chars().count() as f64 * 6.0 + 16.4;
+                        v.push((x - bw / 2.0, y + 40.0, x + bw / 2.0, y + 60.0));
+                    }
+                    v
+                }
+                _ => {
+                    let mut v = vec![glyph];
+                    let tx = if p == NodeLayout::SideLeft { x - 25.0 } else { x + 25.0 };
+                    let (lx0, lx1) = if p == NodeLayout::SideLeft { (tx - 60.0, tx) } else { (tx, tx + 60.0) };
+                    if !n.label.is_empty() {
+                        v.push((lx0, y - 12.0, lx1, y + 2.0));
+                    }
+                    if let Some(s) = &n.status {
+                        let bw = s.chars().count() as f64 * 6.0 + 16.4;
+                        let bx = if p == NodeLayout::SideLeft { tx - bw } else { tx };
+                        v.push((bx, y + 8.0, bx + bw, y + 28.0));
+                    }
+                    v
+                }
+            }
+        };
+        let mut all: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for (n, p) in dense.iter().zip(&plans) {
+            all.extend(rects(n, *p));
+        }
+        let hit = |a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)| a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3;
+        for i in 0..all.len() {
+            for j in i + 1..all.len() {
+                assert!(!hit(all[i], all[j]), "dense layout: rects {:?} and {:?} overlap", all[i], all[j]);
+            }
+        }
+        // sparse scene keeps the classic look (regression guard for the seeds)
+        let sparse = vec![
+            crate::frame::NodeSpec { label: "a".into(), x: 10.0, y: 50.0, status: None, lifeline: false, icon: Some("dns".into()) },
+            crate::frame::NodeSpec { label: "b".into(), x: 90.0, y: 50.0, status: Some("up".into()), lifeline: false, icon: Some("dns".into()) },
+        ];
+        assert!(plan_node_layout(&sparse) == vec![NodeLayout::Below, NodeLayout::Below], "sparse stays below");
+        // note wrapping: long captions wrap to <=3 lines, ellipsized not clipped
+        let long = "word ".repeat(60);
+        assert!(svg::wrap(&long, 92).len() <= 3, "note wraps to <=3 lines");
+    }
 
     println!("check ok");
 }

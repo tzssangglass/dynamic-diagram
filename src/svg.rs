@@ -17,11 +17,61 @@ const PAGE: &str = "#fafbfd";
 const HOVER: &str = "#1b1f2a0f";
 const FONT_MONO: &str = "Inconsolata"; // single name: usvg can't parse comma lists
 
-fn sx(x: f64) -> f64 {
+pub fn sx(x: f64) -> f64 {
     x / 100.0 * W
 }
-fn sy(y: f64) -> f64 {
+pub fn sy(y: f64) -> f64 {
     HEADER_H + y / 100.0 * STAGE_H
+}
+
+/// Where a node's label/status go — ONE rule for any scene. Sparse scenes
+/// keep the classic below-glyph stack; when the below-stack would run into
+/// the next glyph below (dense columns), label+status flip to the side
+/// (left side for right-edge nodes so text stays on canvas).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum NodeLayout {
+    Below,
+    SideLeft,
+    SideRight,
+}
+
+/// px-space geometry constants shared by the planner and the renderer
+const ICON_HALF: f64 = 17.0;
+const LABEL_DY: f64 = 30.0; // below-glyph label baseline
+const BADGE_DY: f64 = 40.0; // below-glyph badge top
+const BADGE_H: f64 = 20.0;
+
+pub fn plan_node_layout(nodes: &[crate::frame::NodeSpec]) -> Vec<NodeLayout> {
+    let pts: Vec<(f64, f64, bool, bool)> = nodes
+        .iter()
+        .map(|n| (sx(n.x), sy(n.y), n.icon.is_some(), n.status.is_some()))
+        .collect();
+    pts.iter()
+        .enumerate()
+        .map(|(i, &(x, y, icon, has_status))| {
+            if !icon {
+                return NodeLayout::Below; // text-only nodes keep +11 badge (unchanged)
+            }
+            let stack_bottom = y + LABEL_DY + if has_status { BADGE_DY - LABEL_DY + BADGE_H } else { 0.0 };
+            // would the below-stack hit the next glyph below in the same column?
+            let dense_below = pts.iter().enumerate().any(|(j, &(x2, y2, icon2, _))| {
+                j != i && icon2 && (x2 - x).abs() < ICON_HALF * 3.0 && y2 > y && stack_bottom > y2 - ICON_HALF - 6.0
+            });
+            if !dense_below {
+                return NodeLayout::Below;
+            }
+            // side: prefer the side with no neighboring node nearby
+            let occupied_right = pts.iter().enumerate().any(|(j, &(x2, y2, icon2, _))| {
+                j != i && icon2 && x2 > x && x2 - x < 120.0 && (y2 - y).abs() < 44.0
+            });
+            let near_right_edge = x > W - 140.0;
+            if occupied_right || near_right_edge {
+                NodeLayout::SideLeft
+            } else {
+                NodeLayout::SideRight
+            }
+        })
+        .collect()
 }
 
 // icon glyph at (x,y). Four tiers:
@@ -155,17 +205,37 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-// wrap caption into <=2 lines (SVG text doesn't wrap); char-safe (CJK/superscripts)
-fn wrap(s: &str, max_chars: usize) -> Vec<&str> {
-    if s.chars().count() <= max_chars {
-        return vec![s];
+/// wrap caption into <=3 lines (SVG text doesn't wrap); char-safe
+/// (CJK/superscripts). Longer tails get an honest ellipsis, never a clip.
+pub fn wrap(s: &str, max_chars: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut rest = s.to_string();
+    while rest.chars().count() > max_chars {
+        if lines.len() == 2 {
+            // 3rd line budget: fit what we can, ellipsize the tail
+            let limit = rest.char_indices().nth(max_chars.saturating_sub(1)).map(|(i, _)| i).unwrap_or(rest.len());
+            lines.push(format!("{}…", &rest[..limit]));
+            return lines;
+        }
+        let limit = rest.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(rest.len());
+        match rest[..limit].rfind(' ') {
+            Some(i) => {
+                lines.push(rest[..i].to_string());
+                rest = rest[i + 1..].to_string();
+            }
+            None => {
+                lines.push(rest.clone());
+                rest.clear();
+            }
+        }
     }
-    // byte offset of the max_chars-th char (never mid-char)
-    let limit = s.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(s.len());
-    match s[..limit].rfind(' ') {
-        Some(i) => vec![&s[..i], &s[i + 1..]],
-        None => vec![s],
+    if !rest.is_empty() {
+        lines.push(rest);
     }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 pub fn render_svg(f: &Frame) -> String {
@@ -296,22 +366,45 @@ pub fn render_svg(f: &Frame) -> String {
         out.push_str("</g>\n");
     }
 
-    // nodes + seq badges (empty label = bare router square marker; icon = glyph + label below)
-    for n in &f.nodes {
+    // nodes + seq badges — placement from the unified planner (any scene)
+    let layouts = plan_node_layout(&f.nodes);
+    for (n, layout) in f.nodes.iter().zip(&layouts) {
         let x = sx(n.x);
         let y = sy(n.y);
         if let Some(icon) = &n.icon {
             icon_glyph(&mut out, icon, x, y);
-            if !n.label.is_empty() {
-                out.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"13\" letter-spacing=\"1.04\">{}</text>\n",
-                    y + 30.0,
-                    esc(&n.label)
-                ));
-            }
-            // status sits BELOW the label (label occupies ~y+20..y+30)
-            if let Some(status) = &n.status {
-                status_badge(&mut out, x, y + 40.0, status);
+            match layout {
+                NodeLayout::Below => {
+                    if !n.label.is_empty() {
+                        out.push_str(&format!(
+                            "<text x=\"{x}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"13\" letter-spacing=\"1.04\">{}</text>\n",
+                            y + LABEL_DY,
+                            esc(&n.label)
+                        ));
+                    }
+                    // status sits BELOW the label (label occupies ~y+20..y+30)
+                    if let Some(status) = &n.status {
+                        status_badge(&mut out, x, y + BADGE_DY, status);
+                    }
+                }
+                side => {
+                    // dense column: label + status beside the glyph, two rows
+                    let dir = if *side == NodeLayout::SideLeft { -1.0 } else { 1.0 };
+                    let anchor = if *side == NodeLayout::SideLeft { "end" } else { "start" };
+                    let tx = x + dir * (ICON_HALF + 8.0);
+                    if !n.label.is_empty() {
+                        out.push_str(&format!(
+                            "<text x=\"{tx}\" y=\"{}\" text-anchor=\"{anchor}\" fill=\"{INK}\" font-size=\"12\">{}</text>\n",
+                            y - 2.0,
+                            esc(&n.label)
+                        ));
+                    }
+                    if let Some(status) = &n.status {
+                        let bw = status.chars().count() as f64 * 6.0 + 16.4;
+                        let bx = if *side == NodeLayout::SideLeft { tx - bw } else { tx };
+                        status_badge(&mut out, bx + bw / 2.0, y + 10.0, status);
+                    }
+                }
             }
             continue; // icon nodes draw their label below the glyph — never fall through
         }
