@@ -10,14 +10,15 @@ Portable diagram/simulation engine (Rust). Two ways in:
 ```json
 {
   "header": "MY NETWORK ·· OVERVIEW",
+  "layout": "flow",
   "nodes": [
-    { "id": "laptop", "label": "your laptop", "icon": "laptop", "x": 10, "y": 55 },
-    { "id": "fw", "label": "firewall", "icon": "firewall", "x": 32, "y": 55 },
-    { "id": "db", "label": "primary db", "icon": "database", "x": 88, "y": 30, "status": "10.0.0.5:5432" }
+    { "id": "laptop", "label": "your laptop", "icon": "laptop" },
+    { "id": "fw", "label": "firewall", "icon": "firewall" },
+    { "id": "db", "label": "primary db", "icon": "database", "status": "10.0.0.5:5432" }
   ],
   "links": [
     { "from": "laptop", "to": "fw", "arrow": "end" },
-    { "from": "fw", "to": "dns", "arrow": "both" }
+    { "from": "fw", "to": "db", "arrow": "both" }
   ],
   "packets": [ { "label": "GET /api", "from": "laptop", "to": "fw", "progress": 0.5 } ],
   "texts":   [ { "text": "dmz", "x": 43, "y": 68, "dim": true } ],
@@ -26,29 +27,44 @@ Portable diagram/simulation engine (Rust). Two ways in:
 }
 ```
 
-Coordinates are 0..100 scene space. `status` = badge under a node; `arrow` =
-`"end"` | `"both"`. See `examples/network.json`.
+`layout` selects measured `flow`, `grid`, or `columns` placement without node
+coordinates. Existing fixed-coordinate specs use 0..100 scene space.
+`status` is a badge under a node; `arrow` is `"end"` or `"both"`.
+See `examples/network.json` and `examples/auto-layout.json`.
 
-### Icons — three tiers
+Canvas height follows content. `canvas.min_height` adds space, while
+`canvas.scale` enlarges the complete presentation without changing layout:
+
+```sh
+dynamic-diagram spec examples/auto-layout.json png --height 660
+dynamic-diagram spec examples/auto-layout.json png --scale 2 --density 2
+```
+
+`--density` controls raster resolution independently. Terminal/browser hosts
+fit the image to the available viewport; a larger display scale cannot exceed
+the physical viewport. Use more content height for a taller inline diagram.
+
+### Icons
 
 1. **Material Symbols — the FULL library: 3,912 filled icons** (embedded path
    data, Apache 2.0, from npm @material-symbols/svg-400). Router, dns, cell_tower,
    heat_pump, cyclone, volcano, skull — every symbol Google ships.
-   `dynamic-diagram spec --list-icons` prints every name; unknown names degrade
-   to label-only gracefully.
+   `dynamic-diagram spec --list-icons` prints the available names.
    Aliases: `server→dns, phone/client→smartphone, tower→cell_tower,
    switch→settings_ethernet, firewall→security, database/db→storage,` etc.
 2. **Flowchart/graphviz shapes** (semantic, not pictorial):
    `box, cylinder, ellipse/oval/circle, diamond, hexagon, stadium/pill,
    triangle, subroutine`.
-3. Unknown name → no glyph, label text only.
+3. Tabler stroke icons (`ti/…`) and official cloud icons (`aws/…`, `azure/…`,
+   `gcp/…`, `cf/…`). Unknown names produce a visible dashed placeholder.
 
 ## Architecture
 
 ```
 timeline docs (sims/*.json, embedded at build) ─┐
-spec JSON (v1 sugar) ───────────────────────────┼─→ Doc ─→ Frame(t) ─→ SVG ─┬─→ browser
-                                                └─→ keyframes resolve      ├─→ PNG (resvg, 30fps)
+spec JSON (v1 sugar) ───────────────────────────┼─→ Doc ─→ prepared layout
+                                                        + Frame(t) ─→ SVG ─┬─→ browser
+                                                                          ├─→ PNG (resvg)
                                                                           └─→ kitty protocol
 ```
 
@@ -57,8 +73,11 @@ spec JSON (v1 sugar) ───────────────────�
   resolves a doc into a static Frame — no per-animation code anywhere.
 - The 28 network sims (TCP handshake, DNS, QUIC, BGP, …) are pure data in
   `sims/`, embedded into the binary at compile time (self-contained, any cwd).
-- Renderers: `src/svg.rs` (SVG), `src/kitty.rs` (terminal pixels).
-  Rasterization is in-process (`resvg`), no subprocess.
+- Taffy composes measured node boxes and page bands. `src/layout.rs` owns
+  geometry and theme metrics; `src/typography.rs` shares fonts with resvg.
+- `src/svg.rs::Renderer` prepares stable document geometry once. Rasterization
+  reuses its pixel buffer and caches identical SVG frames within 16 MiB/64
+  entries. Fresh animation frames still require resvg parsing/rasterization.
 
 ## Run
 
@@ -86,7 +105,8 @@ Each is a timeline document in `sims/<name>.json` (embedded at build) — the
 references for AI-generated animations. Not a coverage library: the mechanism
 is the product, `anim` verbs + keyframes scale it (see
 `outputs/sim-library-strategy.md` for the survey behind this positioning).
-Faithful ports of the original site — timing, captions, geometry preserved.
+Timing, captions and world-coordinate intent remain in the source documents;
+the renderer measures their presentation and reserves space for their content.
 
 Icon data © Google, Apache 2.0 (src/assets/icons.rs).
 

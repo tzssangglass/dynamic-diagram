@@ -3,87 +3,30 @@
 //! Any GUI that can show SVG works (browser DOM, <img>, desktop viewer, or rasterize).
 
 use crate::frame::Frame;
+use crate::{
+    layout::{Plan, Rect},
+    timeline::{Doc, El},
+    typography::{escape as esc, Typography},
+};
 
-pub const W: f64 = 760.0;
-pub const H: f64 = 330.0;
-const HEADER_H: f64 = 36.0;
-const STAGE_H: f64 = 216.0; // stage: y in [HEADER_H, HEADER_H+STAGE_H]
 // fazamhd.com's real palette (light theme, PageLayout.css :root)
 const INK: &str = "#1b1f2a";
 const DIM: &str = "#4a5163";
 const LINE: &str = "#c2c9da";
 const FAINT: &str = "#5b6274";
 const PAGE: &str = "#fafbfd";
-const HOVER: &str = "#1b1f2a0f";
 const FONT_MONO: &str = "Inconsolata"; // single name: usvg can't parse comma lists
-
-pub fn sx(x: f64) -> f64 {
-    x / 100.0 * W
-}
-pub fn sy(y: f64) -> f64 {
-    HEADER_H + y / 100.0 * STAGE_H
-}
-
-/// Where a node's label/status go — ONE rule for any scene. Sparse scenes
-/// keep the classic below-glyph stack; when the below-stack would run into
-/// the next glyph below (dense columns), label+status flip to the side
-/// (left side for right-edge nodes so text stays on canvas).
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum NodeLayout {
-    Below,
-    SideLeft,
-    SideRight,
-}
-
-/// px-space geometry constants shared by the planner and the renderer
-const ICON_HALF: f64 = 17.0;
-const LABEL_DY: f64 = 30.0; // below-glyph label baseline
-const BADGE_DY: f64 = 40.0; // below-glyph badge top
-const BADGE_H: f64 = 20.0;
-
-pub fn plan_node_layout(nodes: &[crate::frame::NodeSpec]) -> Vec<NodeLayout> {
-    let pts: Vec<(f64, f64, bool, bool)> = nodes
-        .iter()
-        .map(|n| (sx(n.x), sy(n.y), n.icon.is_some(), n.status.is_some()))
-        .collect();
-    pts.iter()
-        .enumerate()
-        .map(|(i, &(x, y, icon, has_status))| {
-            if !icon {
-                return NodeLayout::Below; // text-only nodes keep +11 badge (unchanged)
-            }
-            let stack_bottom = y + LABEL_DY + if has_status { BADGE_DY - LABEL_DY + BADGE_H } else { 0.0 };
-            // would the below-stack hit the next glyph below in the same column?
-            let dense_below = pts.iter().enumerate().any(|(j, &(x2, y2, icon2, _))| {
-                j != i && icon2 && (x2 - x).abs() < ICON_HALF * 3.0 && y2 > y && stack_bottom > y2 - ICON_HALF - 6.0
-            });
-            if !dense_below {
-                return NodeLayout::Below;
-            }
-            // side: prefer the side with no neighboring node nearby
-            let occupied_right = pts.iter().enumerate().any(|(j, &(x2, y2, icon2, _))| {
-                j != i && icon2 && x2 > x && x2 - x < 120.0 && (y2 - y).abs() < 44.0
-            });
-            let near_right_edge = x > W - 140.0;
-            if occupied_right || near_right_edge {
-                NodeLayout::SideLeft
-            } else {
-                NodeLayout::SideRight
-            }
-        })
-        .collect()
-}
 
 // icon glyph at (x,y). Four tiers:
 //   1. software-engineering structural glyphs (stack, queue, pool, heap…)
 //   2. Material Symbols full library (3,912) + aliases
 //   3. cloud provider official icons (aws/*, azure/*, gcp/*, cf/*) — full color
 //   4. flowchart shapes (box, cylinder, diamond…)
-fn icon_glyph(out: &mut String, icon: &str, x: f64, y: f64) {
+fn icon_glyph(out: &mut String, icon: &str, x: f64, y: f64, size: f64) {
     // aliases into material
     let mkey = match icon {
-        "server" => "dns",          // stacked-servers look
-        "client" | "phone" => "ti/device-mobile", // material "smartphone" is absent from the table
+        "server" => "dns",                                       // stacked-servers look
+        "client" | "phone" | "smartphone" => "ti/device-mobile", // material "smartphone" is absent from the table
         "tower" => "cell_tower",
         "switch" => "settings_ethernet",
         "firewall" => "security",
@@ -95,7 +38,7 @@ fn icon_glyph(out: &mut String, icon: &str, x: f64, y: f64) {
         "doc" => "description",
         "bank" => "account_balance",
         "robot" => "precision_manufacturing",
-        "laptop" => "laptop_mac",   // "laptop" has no symbol; mac variant stands in
+        "laptop" => "laptop_mac", // "laptop" has no symbol; mac variant stands in
         "sd_storage" => "storage",
         "https" => "lock",
         "restore" => "autorenew",
@@ -104,14 +47,21 @@ fn icon_glyph(out: &mut String, icon: &str, x: f64, y: f64) {
         other => other,
     };
     if let Some(d) = crate::assets::icons::get(mkey) {
-        emit_icon(out, d, x, y);
+        emit_icon(out, d, x, y, size);
         return;
     }
     // brand fallback: "docker" → ti/brand-docker (376 tabler brand glyphs)
     if let Some(d) = crate::assets::icons::get(&format!("brand-{icon}")) {
-        emit_icon(out, d, x, y);
+        emit_icon(out, d, x, y, size);
         return;
     }
+    // Flowchart paths use an intrinsic 48-unit resource viewport, like the
+    // external icon tiers. Their presentation size comes only from the theme.
+    out.push_str(&format!(
+        "<g transform=\"translate({x} {y}) scale({})\">",
+        size / 48.
+    ));
+    let (x, y) = (0., 0.);
     let frag = match icon {
         // flowchart / graphviz shapes (semantic, not pictorial)
         "box" => format!("<g transform=\"translate({x} {y})\"><rect x=\"-17\" y=\"-10\" width=\"34\" height=\"20\" rx=\"2\" fill=\"{PAGE}\" stroke=\"{INK}\" stroke-width=\"1.4\"/></g>\n"),
@@ -143,314 +93,469 @@ fn icon_glyph(out: &mut String, icon: &str, x: f64, y: f64) {
         // unknown name: dashed placeholder + "?" so a typo is visible, not silent
         _ => format!(
             "<g transform=\"translate({x} {y})\"><rect x=\"-17\" y=\"-11\" width=\"34\" height=\"22\" rx=\"3\" fill=\"{PAGE}\" stroke=\"{LINE}\" stroke-dasharray=\"3 3\"/><text x=\"0\" y=\"4\" text-anchor=\"middle\" fill=\"{DIM}\" font-size=\"12\">{}</text></g>\n",
-            esc(icon)
+            "?"
         ),
     };
     out.push_str(&frag);
+    out.push_str("</g>");
 }
 
 /// draw a resolved icon glyph centered at (x,y)
-fn emit_icon(out: &mut String, d: crate::assets::icons::Icon, x: f64, y: f64) {
+fn emit_icon(out: &mut String, d: crate::assets::icons::Icon, x: f64, y: f64, size: f64) {
     match d {
         crate::assets::icons::Icon::Path(d) => {
             // material fill paths: 960x960 grid, y negative-up (viewBox 0 -960 960 960);
-            // center (480,-480) and scale to ~34px like the other tiers
+            // center (480,-480) in the allocated icon box
             out.push_str(&format!(
-                "<g transform=\"translate({x} {y}) scale(0.0354) translate(-480 480)\"><path d=\"{d}\" fill=\"{INK}\"/></g>\n"
+                "<g transform=\"translate({x} {y}) scale({}) translate(-480 480)\"><path d=\"{d}\" fill=\"{INK}\"/></g>\n", size/960.
             ));
         }
         crate::assets::icons::Icon::Stroke(d) => {
             // tabler stroke paths: 24x24 viewbox, fill=none + ink stroke
             out.push_str(&format!(
-                "<g transform=\"translate({x} {y}) scale(1.4) translate(-12 -12)\"><path d=\"{d}\" fill=\"none\" stroke=\"{INK}\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></g>\n"
+                "<g transform=\"translate({x} {y}) scale({}) translate(-12 -12)\"><path d=\"{d}\" fill=\"none\" stroke=\"{INK}\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></g>\n", size/24.
             ));
         }
         crate::assets::icons::Icon::Svg(vb, inner) => {
-            // full-color provider icon: nested <svg> scaled into a 34x34 box
+            // full-color provider icon: nested SVG in the allocated icon box
             out.push_str(&format!(
-                "<svg x=\"{}\" y=\"{}\" width=\"34\" height=\"34\" viewBox=\"{vb}\" overflow=\"visible\">{inner}</svg>\n",
-                x - 17.0,
-                y - 17.0
+                "<svg x=\"{}\" y=\"{}\" width=\"{size}\" height=\"{size}\" viewBox=\"{vb}\">{inner}</svg>\n",
+                x - size/2.,
+                y - size/2.
             ));
         }
     }
 }
 
-/// status pill centered on x, box top edge at `top`
-fn status_badge(out: &mut String, x: f64, top: f64, status: &str) {
-    let pending = status.contains("pending");
-    let bw = status.chars().count() as f64 * 6.0 + 16.4;
-    let (fill, stroke, dash, op, txt) = if pending {
-        (PAGE, LINE, "3 3", 0.5, DIM)
+/// A document owns its immutable layout and its bounded-by-document text cache.
+pub struct Renderer {
+    doc: Doc,
+    plan: Plan,
+    ty: Typography,
+}
+impl Renderer {
+    pub fn new(doc: &Doc) -> Result<Self, String> {
+        let ty = Typography::default();
+        let plan = Plan::new(doc, &ty)?;
+        Ok(Self {
+            doc: doc.clone(),
+            plan,
+            ty,
+        })
+    }
+    pub fn size(&self) -> (f64, f64) {
+        (
+            self.plan.width * self.plan.canvas.scale,
+            self.plan.height * self.plan.canvas.scale,
+        )
+    }
+    pub fn render(&self, t: u64) -> String {
+        let time = match self.doc.duration {
+            Some(d) if d > 0 => t % d,
+            _ => t,
+        };
+        let (mut ns, mut ts, mut ls, mut ps) = (vec![], vec![], vec![], vec![]);
+        let (mut ni, mut ti) = (0, 0);
+        for el in &self.doc.els {
+            match el {
+                El::Node(n) => {
+                    if !n.show.as_ref().is_some_and(|s| !s.step(time)) {
+                        ns.push(ni);
+                    }
+                    ni += 1;
+                }
+                El::Text(t) => {
+                    if !t.show.as_ref().is_some_and(|s| !s.step(time)) {
+                        ts.push(ti);
+                    }
+                    ti += 1;
+                }
+                El::Line(l) => {
+                    if !l.show.as_ref().is_some_and(|s| !s.step(time)) {
+                        ls.push((l.from.clone(), l.to.clone()));
+                    }
+                }
+                El::Packet(p) => {
+                    if !p.show.as_ref().is_some_and(|s| !s.step(time)) {
+                        ps.push((p.from.clone(), p.to.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let ids = self
+            .doc
+            .els
+            .iter()
+            .filter_map(|el| {
+                if let El::Node(n) = el {
+                    Some(n.id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        render(
+            &self.doc.frame_at(t),
+            &self.plan,
+            &self.ty,
+            &ns,
+            &ts,
+            &ls,
+            &ps,
+            &ids,
+        )
+    }
+}
+pub fn render_svg(f: &Frame) -> String {
+    let ty = Typography::default();
+    let plan = Plan::for_frame(f, &ty);
+    render(
+        f,
+        &plan,
+        &ty,
+        &(0..f.nodes.len()).collect::<Vec<_>>(),
+        &(0..f.texts.len()).collect::<Vec<_>>(),
+        &[],
+        &[],
+        &[],
+    )
+}
+fn text(
+    out: &mut String,
+    ty: &Typography,
+    s: &str,
+    size: f64,
+    box_: Rect,
+    color: &str,
+    center: bool,
+    gap: f64,
+) {
+    let lines = ty.wrap(s, size, box_.w.max(1.));
+    let line_h = ty.measure("Mg", size).height;
+    for (i, line) in lines.iter().enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let m = ty.measure(line, size);
+        let x = box_.x + if center { (box_.w - m.width) / 2. } else { 0. } - m.left;
+        let y = box_.y + i as f64 * (line_h + gap) - m.top;
+        out.push_str(&format!(
+            "<text x=\"{x}\" y=\"{y}\" fill=\"{color}\" font-size=\"{size}\">{}</text>\n",
+            esc(line)
+        ));
+    }
+}
+fn pill(out: &mut String, ty: &Typography, s: &str, box_: Rect, p: &Plan, pending: bool) {
+    let th = p.theme;
+    let op = if pending { 0.5 } else { 1. };
+    let dash = if pending {
+        format!("{} {}", th.dash, th.dash)
     } else {
-        (HOVER, INK, "none", 1.0, INK)
+        "none".into()
     };
-    out.push_str(&format!("<g opacity=\"{op}\">\n"));
-    out.push_str(&format!(
-        "<rect x=\"{}\" y=\"{top}\" width=\"{bw}\" height=\"20\" rx=\"3\" fill=\"{fill}\" stroke=\"{stroke}\" stroke-dasharray=\"{dash}\"/>\n",
-        x - bw / 2.0
-    ));
-    out.push_str(&format!(
-        "<text x=\"{x}\" y=\"{}\" text-anchor=\"middle\" fill=\"{txt}\" font-size=\"12\" font-family=\"{FONT_MONO}\">{}</text>\n",
-        top + 14.0,
-        esc(status)
-    ));
+    let stroke = if pending { LINE } else { INK };
+    out.push_str(&format!("<g opacity=\"{op}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" fill=\"{PAGE}\" stroke=\"{stroke}\" stroke-dasharray=\"{dash}\"/>\n",box_.x,box_.y,box_.w,box_.h,th.badge_radius));
+    text(
+        out,
+        ty,
+        s,
+        th.font,
+        Rect {
+            x: box_.x + th.badge_padding,
+            y: box_.y + th.badge_padding / 2.,
+            w: box_.w - 2. * th.badge_padding,
+            h: box_.h - th.badge_padding,
+        },
+        INK,
+        true,
+        th.line_gap,
+    );
     out.push_str("</g>\n");
 }
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-/// wrap caption into <=3 lines (SVG text doesn't wrap); char-safe
-/// (CJK/superscripts). Longer tails get an honest ellipsis, never a clip.
-pub fn wrap(s: &str, max_chars: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    let mut rest = s.to_string();
-    while rest.chars().count() > max_chars {
-        if lines.len() == 2 {
-            // 3rd line budget: fit what we can, ellipsize the tail
-            let limit = rest.char_indices().nth(max_chars.saturating_sub(1)).map(|(i, _)| i).unwrap_or(rest.len());
-            lines.push(format!("{}…", &rest[..limit]));
-            return lines;
-        }
-        let limit = rest.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(rest.len());
-        match rest[..limit].rfind(' ') {
-            Some(i) => {
-                lines.push(rest[..i].to_string());
-                rest = rest[i + 1..].to_string();
-            }
-            None => {
-                lines.push(rest.clone());
-                rest.clear();
-            }
-        }
-    }
-    if !rest.is_empty() {
-        lines.push(rest);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
-}
-
-pub fn render_svg(f: &Frame) -> String {
-    let mut out = String::new();
-    out.push_str(&format!(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {} {}\" font-family=\"{FONT_MONO}\">\n",
-        W as u32, H as u32
-    ));
-    out.push_str(&format!("<rect width=\"{}\" height=\"{}\" fill=\"{PAGE}\"/>\n", W as u32, H as u32));
-    out.push_str(&format!("<rect x=\"0.5\" y=\"0.5\" width=\"{}\" height=\"{}\" rx=\"8\" fill=\"none\" stroke=\"{LINE}\"/>\n", W - 1.0, H - 1.0));
-
-    // header bar
+type References = (Option<String>, Option<String>);
+#[allow(clippy::too_many_arguments)]
+fn render(
+    f: &Frame,
+    p: &Plan,
+    ty: &Typography,
+    ns: &[usize],
+    ts: &[usize],
+    ls: &[References],
+    ps: &[References],
+    ids: &[Option<String>],
+) -> String {
+    let th = p.theme;
+    let (w, h) = (p.width, p.height);
+    let mut out = String::with_capacity(16384);
+    out.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {w} {h}\" font-family=\"{FONT_MONO}\">\n",w*p.canvas.scale,h*p.canvas.scale));
+    out.push_str(&format!("<rect width=\"{w}\" height=\"{h}\" fill=\"{PAGE}\"/><g stroke-width=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" fill=\"none\" stroke=\"{LINE}\"/>\n",th.border,th.border/2.,th.border/2.,w-th.border,h-th.border,th.corner_radius));
     if let Some(header) = &f.header {
-        let mut parts = header.split("··").map(|s| s.trim());
-        let left = parts.next().unwrap_or("");
-        let right = parts.next().unwrap_or("");
-        out.push_str(&format!(
-            "<text x=\"14\" y=\"23\" fill=\"{DIM}\" font-size=\"12\" letter-spacing=\"2.16\">{}</text>\n",
-            esc(left)
-        ));
-        out.push_str(&format!(
-            "<text x=\"{}\" y=\"23\" text-anchor=\"end\" fill=\"{DIM}\" font-size=\"12\" letter-spacing=\"2.16\">{}</text>\n",
-            W - 14.0,
-            esc(right)
-        ));
-        out.push_str(&format!("<line x1=\"0\" y1=\"{HEADER_H}\" x2=\"{W}\" y2=\"{HEADER_H}\" stroke=\"{LINE}\"/>\n"));
-    }
-
-    // lifelines (dashed vertical under nodes)
-    for n in &f.nodes {
-        if !n.lifeline {
-            continue;
+        let parts = header.split("··").map(str::trim).collect::<Vec<_>>();
+        for (i, part) in parts.iter().take(2).enumerate() {
+            let width = (w - 2. * th.padding) / 2. - th.gap;
+            text(
+                &mut out,
+                ty,
+                part,
+                th.font,
+                Rect {
+                    x: th.padding + if i == 0 { 0. } else { w / 2. },
+                    y: th.padding,
+                    w: width,
+                    h: p.header.h,
+                },
+                DIM,
+                false,
+                th.line_gap,
+            );
         }
         out.push_str(&format!(
-            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{LINE}\" stroke-dasharray=\"4 4\"/>\n",
-            sx(n.x),
-            sy(n.y) + 44.0,
-            sx(n.x),
-            sy(100.0) - 4.0
+            "<line x1=\"0\" y1=\"{}\" x2=\"{w}\" y2=\"{}\" stroke=\"{LINE}\"/>\n",
+            p.header.bottom(),
+            p.header.bottom()
         ));
     }
-
-    // raw SVG paths (scene coords 0..100, scaled into the stage; fill = land color)
+    let node_boxes = f
+        .nodes
+        .iter()
+        .zip(ns)
+        .map(|(n, i)| {
+            let (x, y) = p.node_point(*i, n.x, n.y);
+            p.nodes[*i].bounds.moved(x, y)
+        })
+        .collect::<Vec<_>>();
+    let node_ref = |id: &Option<String>| -> Option<Rect> {
+        let id = id.as_ref()?;
+        ns.iter()
+            .position(|i| ids.get(*i).and_then(Option::as_ref) == Some(id))
+            .map(|i| node_boxes[i])
+    };
+    let route = |x1: f64, y1: f64, x2: f64, y2: f64, refs: Option<&References>| {
+        let mut a = p.point(x1, y1);
+        let mut b = p.point(x2, y2);
+        if let Some((from, to)) = refs {
+            let (ab, bb) = (node_ref(from), node_ref(to));
+            if let Some(r) = ab {
+                a = r.center();
+            }
+            if let Some(r) = bb {
+                b = r.center();
+            }
+            let (ac, bc) = (a, b);
+            if let Some(r) = ab {
+                a = crate::layout::boundary(r, bc);
+            }
+            if let Some(r) = bb {
+                b = crate::layout::boundary(r, ac);
+            }
+        }
+        (a, b)
+    };
+    for (n, b) in f.nodes.iter().zip(&node_boxes) {
+        if n.lifeline {
+            let (x, _) = b.center();
+            let bottom = p.point(n.x, 100.).1.max(b.bottom() + th.gap);
+            out.push_str(&format!("<line x1=\"{x}\" y1=\"{}\" x2=\"{x}\" y2=\"{bottom}\" stroke=\"{LINE}\" stroke-dasharray=\"{} {}\"/>\n",b.bottom()+th.gap,th.dash,th.dash));
+        }
+    }
     if !f.paths.is_empty() {
         out.push_str(&format!(
-            "<g transform=\"translate(0,{}) scale({} {})\">\n",
-            HEADER_H,
-            W / 100.0,
-            STAGE_H / 100.0
+            "<g transform=\"translate({} {}) scale({} {})\">",
+            p.stage_left,
+            p.stage_top,
+            p.stage_width / 100.,
+            p.stage_span / 100.
         ));
         for d in &f.paths {
-            out.push_str(&format!("<path d=\"{}\" fill=\"{LINE}\" stroke=\"none\"/>\n", d));
+            out.push_str(&format!("<path d=\"{}\" fill=\"{LINE}\"/>\n", esc(d)));
         }
-        out.push_str("</g>\n");
+        out.push_str("</g>");
     }
-
-    // polylines (waveforms, graphs)
     for pl in &f.polylines {
-        let pts: Vec<String> = pl.points.iter().map(|(x, y)| format!("{},{}", sx(*x), sy(*y))).collect();
+        let pts = pl
+            .points
+            .iter()
+            .map(|(x, y)| {
+                let (x, y) = p.point(*x, *y);
+                format!("{x},{y}")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         out.push_str(&format!(
-            "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"1.4\"/>\n",
-            pts.join(" "),
-            if pl.dim { LINE } else { INK }
+            "<polyline points=\"{pts}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\"/>\n",
+            if pl.dim { LINE } else { INK },
+            th.route_stroke
         ));
     }
-
-    // free-floating annotations
-    for t in &f.texts {
-        out.push_str(&format!(
-            "<text x=\"{}\" y=\"{}\" text-anchor=\"{}\" fill=\"{}\" font-size=\"12\">{}</text>\n",
-            sx(t.x),
-            sy(t.y),
-            if t.left { "start" } else { "middle" },
-            if t.dim { DIM } else { INK },
-            esc(&t.text)
-        ));
-    }
-
-    // trails (landed packet paths) / static links; optional arrowhead at the end
-    for t in &f.trails {
-        out.push_str(&format!(
-            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{LINE}\" opacity=\"0.6\"/>\n",
-            sx(t.x1),
-            sy(t.y1),
-            sx(t.x2),
-            sy(t.y2)
-        ));
-        if t.arrow_end {
-            let (x1, y1, x2, y2) = (sx(t.x1), sy(t.y1), sx(t.x2), sy(t.y2));
+    for (i, l) in f.trails.iter().enumerate() {
+        let ((x1, y1), (x2, y2)) = route(l.x1, l.y1, l.x2, l.y2, ls.get(i));
+        out.push_str(&format!("<line id=\"route-{i}\" x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" stroke=\"{LINE}\" opacity=\"0.6\"/>\n"));
+        if l.arrow_end {
             let (dx, dy) = (x2 - x1, y2 - y1);
-            let len = (dx * dx + dy * dy).sqrt().max(1.0);
+            let len = dx.hypot(dy).max(1.);
             let (ux, uy) = (dx / len, dy / len);
-            let (px, py) = (-uy, ux); // perpendicular
             out.push_str(&format!(
                 "<path d=\"M {x2} {y2} L {} {} L {} {} Z\" fill=\"{INK}\"/>\n",
-                x2 - ux * 9.0 + px * 4.0,
-                y2 - uy * 9.0 + py * 4.0,
-                x2 - ux * 9.0 - px * 4.0,
-                y2 - uy * 9.0 - py * 4.0
+                x2 - ux * th.gap - uy * th.gap / 2.,
+                y2 - uy * th.gap + ux * th.gap / 2.,
+                x2 - ux * th.gap + uy * th.gap / 2.,
+                y2 - uy * th.gap - ux * th.gap / 2.
             ));
         }
     }
-
-    // packets: bordered mono box, faded when landed; lerps both axes (zigzag paths)
-    for p in &f.packets {
-        // a travelling packet parked on an endpoint is invisible (not launched yet /
-        // already arrived) — drawing it there stacks its label onto the node.
-        // zero-length "pill resting at a host" packets (arp & friends) are exempt.
-        let travel = (p.x2 - p.x1).abs() + (p.y2 - p.y1).abs() > 1.0;
-        if travel && !p.landed && (p.p <= 0.02 || p.p >= 0.98) {
+    let mut label_obstacles = node_boxes.clone();
+    label_obstacles.extend(f.texts.iter().zip(ts).map(|(t, index)| {
+        let a = &p.annotations[*index];
+        let (x, y) = p.point(t.x, t.y);
+        Rect {
+            x: x + a.dx,
+            y: y + a.dy,
+            ..a.bounds
+        }
+    }));
+    for (i, pk) in f.packets.iter().enumerate() {
+        let (a, b) = route(pk.x1, pk.y1, pk.x2, pk.y2, ps.get(i));
+        let x = a.0 + (b.0 - a.0) * pk.p;
+        let y = a.1 + (b.1 - a.1) * pk.p;
+        let lines = ty.wrap(
+            &pk.label,
+            th.font,
+            w - 2. * th.padding - 2. * th.badge_padding,
+        );
+        let label_width = lines
+            .iter()
+            .map(|s| ty.measure(s, th.font).width)
+            .fold(0., f64::max);
+        let line_height = ty.measure("Mg", th.font).height;
+        let label_height = lines.len() as f64 * (line_height + th.line_gap) - th.line_gap;
+        let wanted = Rect {
+            x: x - label_width / 2. - th.badge_padding,
+            y: y - (label_height + th.badge_padding) / 2.,
+            w: label_width + 2. * th.badge_padding,
+            h: label_height + th.badge_padding,
+        };
+        let travel = (b.0 - a.0).hypot(b.1 - a.1) > f64::EPSILON;
+        if travel && !pk.landed && (pk.p <= 0. || pk.p >= 1.) {
             continue;
         }
-        let x = sx(p.x1 + (p.x2 - p.x1) * p.p);
-        let y = sy(p.y1 + (p.y2 - p.y1) * p.p);
-        let bw = p.label.chars().count() as f64 * 6.0 + 20.0; // Inconsolata 12px: 0.5em advance
-        let op = if p.landed { 0.55 } else { 1.0 };
-        out.push_str(&format!("<g opacity=\"{op}\">\n"));
-        out.push_str(&format!(
-            "<rect x=\"{}\" y=\"{}\" width=\"{bw}\" height=\"22\" rx=\"3\" fill=\"{PAGE}\" stroke=\"{FAINT}\"/>\n",
-            x - bw / 2.0,
-            y - 11.0
-        ));
-        out.push_str(&format!(
-            "<text x=\"{x}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"12\" font-family=\"{FONT_MONO}\">{}</text>\n",
-            y + 4.0,
-            esc(&p.label)
-        ));
+        let viewport = Rect {
+            x: th.padding,
+            y: p.header.bottom() + th.gap,
+            w: w - 2. * th.padding,
+            h: p.badge.y - p.header.bottom() - 2. * th.gap,
+        };
+        let Some(box_) = crate::layout::place_near(wanted, &label_obstacles, viewport, th.gap / 2.)
+        else {
+            continue;
+        };
+        label_obstacles.push(box_);
+        if pk.landed {
+            out.push_str("<g opacity=\"0.55\">");
+        }
+        out.push_str(&format!("<g id=\"packet-{i}\">"));
+        if (box_.x - wanted.x).abs() + (box_.y - wanted.y).abs() > f64::EPSILON {
+            let (lx, ly) = crate::layout::boundary(box_, (x, y));
+            out.push_str(&format!("<line x1=\"{x}\" y1=\"{y}\" x2=\"{lx}\" y2=\"{ly}\" stroke=\"{LINE}\"/><circle cx=\"{x}\" cy=\"{y}\" r=\"{}\" fill=\"{INK}\"/>",th.route_stroke));
+        }
+        pill(&mut out, ty, &pk.label, box_, p, false);
+        out.push_str("</g>");
+        if pk.landed {
+            out.push_str("</g>");
+        }
+    }
+    for ((n, index), bounds) in f.nodes.iter().zip(ns).zip(&node_boxes) {
+        let nb = &p.nodes[*index];
+        let (x, y) = p.node_point(*index, n.x, n.y);
+        out.push_str(&format!("<g id=\"node-{index}\" data-node=\"{index}\">"));
+        if let Some(icon) = &n.icon {
+            let (ix, iy) = nb.icon.unwrap().moved(x, y).center();
+            icon_glyph(&mut out, icon, ix, iy, th.icon);
+        } else if n.label.is_empty() {
+            out.push_str(&format!("<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{PAGE}\" stroke=\"{FAINT}\"/>\n",x-th.gap/2.,y-th.gap/2.,th.gap,th.gap));
+        }
+        text(
+            &mut out,
+            ty,
+            &n.label,
+            th.label_font,
+            nb.label.moved(x, y),
+            INK,
+            true,
+            th.line_gap,
+        );
+        if let Some(status) = &n.status {
+            if nb.status.h > 0. {
+                pill(
+                    &mut out,
+                    ty,
+                    status,
+                    nb.status.moved(x, y),
+                    p,
+                    status.contains("pending"),
+                );
+            }
+        }
+        let _ = bounds;
         out.push_str("</g>\n");
     }
-
-    // nodes + seq badges — placement from the unified planner (any scene)
-    let layouts = plan_node_layout(&f.nodes);
-    for (n, layout) in f.nodes.iter().zip(&layouts) {
-        let x = sx(n.x);
-        let y = sy(n.y);
-        if let Some(icon) = &n.icon {
-            icon_glyph(&mut out, icon, x, y);
-            match layout {
-                NodeLayout::Below => {
-                    if !n.label.is_empty() {
-                        out.push_str(&format!(
-                            "<text x=\"{x}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"13\" letter-spacing=\"1.04\">{}</text>\n",
-                            y + LABEL_DY,
-                            esc(&n.label)
-                        ));
-                    }
-                    // status sits BELOW the label (label occupies ~y+20..y+30)
-                    if let Some(status) = &n.status {
-                        status_badge(&mut out, x, y + BADGE_DY, status);
-                    }
-                }
-                side => {
-                    // dense column: label + status beside the glyph, two rows
-                    let dir = if *side == NodeLayout::SideLeft { -1.0 } else { 1.0 };
-                    let anchor = if *side == NodeLayout::SideLeft { "end" } else { "start" };
-                    let tx = x + dir * (ICON_HALF + 8.0);
-                    if !n.label.is_empty() {
-                        out.push_str(&format!(
-                            "<text x=\"{tx}\" y=\"{}\" text-anchor=\"{anchor}\" fill=\"{INK}\" font-size=\"12\">{}</text>\n",
-                            y - 2.0,
-                            esc(&n.label)
-                        ));
-                    }
-                    if let Some(status) = &n.status {
-                        let bw = status.chars().count() as f64 * 6.0 + 16.4;
-                        let bx = if *side == NodeLayout::SideLeft { tx - bw } else { tx };
-                        status_badge(&mut out, bx + bw / 2.0, y + 10.0, status);
-                    }
-                }
-            }
-            continue; // icon nodes draw their label below the glyph — never fall through
-        }
-        if n.label.is_empty() {
-            out.push_str(&format!(
-                "<rect x=\"{}\" y=\"{}\" width=\"10\" height=\"10\" rx=\"2\" fill=\"{PAGE}\" stroke=\"{FAINT}\"/>\n",
-                x - 5.0,
-                y - 5.0
-            ));
-            continue;
-        }
-        out.push_str(&format!(
-            "<text x=\"{x}\" y=\"{y}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"13\" letter-spacing=\"1.04\">{}</text>\n",
-            esc(&n.label)
-        ));
-        if let Some(status) = &n.status {
-            status_badge(&mut out, x, y + 11.0, status);
-        }
+    for (t, index) in f.texts.iter().zip(ts) {
+        let a = &p.annotations[*index];
+        let (x, y) = p.point(t.x, t.y);
+        text(
+            &mut out,
+            ty,
+            &t.text,
+            th.font,
+            Rect {
+                x: x + a.dx,
+                y: y + a.dy,
+                ..a.bounds
+            },
+            if t.dim { DIM } else { INK },
+            false,
+            th.line_gap,
+        );
     }
-
-    // established badge
     if let Some(badge) = &f.badge {
-        out.push_str(&format!(
-            "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" fill=\"{INK}\" font-size=\"12\" letter-spacing=\"3\">{}</text>\n",
-            W / 2.0,
-            sy(100.0) + 2.0,
-            esc(&badge.to_uppercase())
-        ));
+        text(
+            &mut out,
+            ty,
+            &badge.to_uppercase(),
+            th.font,
+            Rect {
+                x: th.padding,
+                y: p.badge.y + th.gap,
+                w: w - 2. * th.padding,
+                h: p.badge.h,
+            },
+            INK,
+            true,
+            th.line_gap,
+        );
     }
-
-    // caption bar (wrapped, dim)
-    let lines = wrap(&f.note, 92);
-    let cap_top = HEADER_H + STAGE_H + 24.0;
     out.push_str(&format!(
-        "<line x1=\"0\" y1=\"{}\" x2=\"{W}\" y2=\"{}\" stroke=\"{LINE}\"/>\n",
-        HEADER_H + STAGE_H + 8.0,
-        HEADER_H + STAGE_H + 8.0
+        "<line data-footer=\"true\" x1=\"0\" y1=\"{}\" x2=\"{w}\" y2=\"{}\" stroke=\"{LINE}\"/>\n",
+        p.caption.y, p.caption.y
     ));
-    for (i, s) in lines.iter().enumerate() {
-        out.push_str(&format!(
-            "<text x=\"14\" y=\"{}\" fill=\"{DIM}\" font-size=\"12\">{}</text>\n",
-            cap_top + i as f64 * 16.0,
-            esc(s)
-        ));
-    }
-
-    out.push_str("</svg>\n");
+    text(
+        &mut out,
+        ty,
+        &f.note,
+        th.font,
+        Rect {
+            x: th.padding,
+            y: p.caption.y + th.padding,
+            w: w - 2. * th.padding,
+            h: p.caption.h,
+        },
+        DIM,
+        false,
+        th.line_gap,
+    );
+    out.push_str("</g></svg>\n");
     out
 }
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod render_tests;

@@ -20,6 +20,9 @@ use std::collections::HashMap;
 /// ```
 #[derive(Deserialize)]
 struct SpecV1 {
+    #[serde(default)]
+    canvas: crate::layout::Canvas,
+    layout: Option<crate::layout::Structural>,
     duration: Option<u64>,
     /// animation pattern verb: choreography compiler for the packet/status
     /// timelines ("seq" | "fanout" | "flood" | "flip"). Requires duration.
@@ -42,8 +45,8 @@ struct NodeD {
     pub id: Option<String>,
     pub label: Option<String>,
     pub icon: Option<String>,
-    pub x: f64,
-    pub y: f64,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
     pub status: Option<String>,
     #[serde(default)]
     pub lifeline: bool,
@@ -106,7 +109,11 @@ fn parse_anim(s: &str) -> Result<Option<Anim>, String> {
         "fanout" => Some(Anim::Fanout),
         "flood" => Some(Anim::Flood),
         "flip" => Some(Anim::Flip),
-        other => return Err(format!("unknown anim {other:?} (seq | fanout | flood | flip)")),
+        other => {
+            return Err(format!(
+                "unknown anim {other:?} (seq | fanout | flood | flip)"
+            ))
+        }
     })
 }
 
@@ -136,6 +143,7 @@ fn pattern_window(anim: Anim, i: usize, n: usize) -> (f64, f64) {
 
 pub fn parse(json: &str) -> Result<Doc, String> {
     let spec: SpecV1 = serde_json::from_str(json).map_err(|e| format!("spec parse: {e}"))?;
+    spec.canvas.validate()?;
     let anim = match spec.anim.as_deref() {
         None => None,
         Some(a) => {
@@ -146,23 +154,60 @@ pub fn parse(json: &str) -> Result<Doc, String> {
             v
         }
     };
+    let coordinates = if let Some(layout) = &spec.layout {
+        if spec.nodes.iter().any(|n| n.x.is_some() || n.y.is_some()) {
+            return Err("structural layout requires all node coordinates to be omitted".into());
+        }
+        crate::layout::structural_positions(
+            layout,
+            spec.canvas,
+            &spec
+                .nodes
+                .iter()
+                .map(|n| {
+                    (
+                        n.icon.is_some(),
+                        n.label.clone().unwrap_or_default(),
+                        n.status.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        )?
+    } else {
+        spec.nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| match (n.x, n.y) {
+                (Some(x), Some(y))
+                    if x.is_finite()
+                        && y.is_finite()
+                        && (0. ..=100.).contains(&x)
+                        && (0. ..=100.).contains(&y) =>
+                {
+                    Ok((x, y))
+                }
+                _ => Err(format!(
+                    "node {i} needs finite x/y in 0..100; omit both with an explicit layout"
+                )),
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    };
     let mut pos: HashMap<String, (f64, f64)> = HashMap::new();
     let mut els = Vec::new();
-    let flip_targets: Vec<Option<String>> = spec
-        .nodes
-        .iter()
-        .map(|n| n.status.clone())
-        .collect();
+    let flip_targets: Vec<Option<String>> = spec.nodes.iter().map(|n| n.status.clone()).collect();
     let n_flip = flip_targets.iter().flatten().count().max(1);
     for (i, n) in spec.nodes.iter().enumerate() {
         let id = n.id.clone().unwrap_or_else(|| i.to_string());
-        pos.insert(id.clone(), (n.x, n.y));
+        if pos.insert(id.clone(), coordinates[i]).is_some() {
+            return Err(format!("duplicate node id {id:?}"));
+        }
         // flip: statuses reveal left-to-right in node order — the story of
         // state spreading through the system ("" timeline key = absent)
         let status = if anim == Some(Anim::Flip) {
             flip_targets[i].clone().map(|s| {
                 let k = flip_targets[..i].iter().flatten().count();
-                let t = ((0.12 + 0.76 * k as f64 / n_flip as f64) * spec.duration.unwrap() as f64) as u64;
+                let t = ((0.12 + 0.76 * k as f64 / n_flip as f64) * spec.duration.unwrap() as f64)
+                    as u64;
                 Tl::Keyed(vec![(0, String::new()), (t, s)])
             })
         } else {
@@ -172,14 +217,18 @@ pub fn parse(json: &str) -> Result<Doc, String> {
             id: Some(id),
             label: n.label.clone().map(Tl::Const),
             icon: n.icon.clone(),
-            x: Tl::Const(n.x),
-            y: Tl::Const(n.y),
+            x: Tl::Const(coordinates[i].0),
+            y: Tl::Const(coordinates[i].1),
             status,
             lifeline: n.lifeline,
             show: None,
         }));
     }
-    let get = |k: &str| -> Result<(f64, f64), String> { pos.get(k).copied().ok_or_else(|| format!("unknown node {k:?}")) };
+    let get = |k: &str| -> Result<(f64, f64), String> {
+        pos.get(k)
+            .copied()
+            .ok_or_else(|| format!("unknown node {k:?}"))
+    };
     for l in &spec.links {
         get(&l.from)?;
         get(&l.to)?;
@@ -243,6 +292,8 @@ pub fn parse(json: &str) -> Result<Doc, String> {
             (None, None, _) => Tl::Const(p.progress.unwrap_or(0.5).clamp(0.0, 1.0)),
         };
         els.push(El::Packet(PacketEl {
+            from: Some(p.from.clone()),
+            to: Some(p.to.clone()),
             label: p.label.clone(),
             x1: Tl::Const(a.0),
             y1: Tl::Const(a.1),
@@ -263,13 +314,17 @@ pub fn parse(json: &str) -> Result<Doc, String> {
             show: None,
         }));
     }
-    Ok(Doc {
+    let doc = Doc {
+        structural: spec.layout,
+        canvas: spec.canvas,
         duration: spec.duration,
         header: spec.header.map(Tl::Const),
         badge: spec.badge.map(Tl::Const),
         note: spec.note.map(Tl::Const),
         els,
-    })
+    };
+    doc.validate()?;
+    Ok(doc)
 }
 
 #[allow(dead_code)]

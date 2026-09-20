@@ -10,10 +10,11 @@ render a single frame with packets parked at their `progress`; animated specs
   "header":  "REQUEST PATH ·· CLIENT → LB → SERVICE",
   "duration": 8000,
   "badge":   "8s loop",
-  "note":    "Caption line at the bottom (wrapped at ~92 chars).",
+  "note":    "Caption at the bottom, wrapped by measured text width.",
   "nodes": [
     { "id": "client", "label": "client", "icon": "phone",
-      "x": 8, "y": 50, "status": "seq 5000", "lifeline": false }
+      "x": 8, "y": 50, "status": "seq 5000", "lifeline": false },
+    { "id": "lb", "label": "load balancer", "icon": "router", "x": 80, "y": 50 }
   ],
   "links":   [ { "from": "client", "to": "lb", "arrow": "end" } ],
   "packets": [ { "label": "GET /api", "from": "client", "to": "lb",
@@ -28,17 +29,22 @@ render a single frame with packets parked at their `progress`; animated specs
 |-------|------|---------|
 | `header` | string? | top bar; `··` splits left/right sides |
 | `duration` | u64? | ms per loop; presence switches to animated mode |
-| `badge` | string? | bottom-center label (uppercased, letterspaced) |
-| `note` | string? | bottom caption, wrapped to ≤ 2 lines |
-| `nodes[]` | | `id?` (else index), `label?`, `icon?`, `x`, `y` (0–100), `status?`, `lifeline?` (default false; dashed vertical line under the node) |
+| `badge` | string? | bottom-center label, uppercased |
+| `note` | string? | measured, wrapped bottom caption; height follows content |
+| `canvas` | object? | `width` (760), `min_height` (330), `scale` (1); applies to v1 and v2 |
+| `layout` | string/object? | v1 structural placement: `flow`, `grid`, `columns`, or `{ "mode": "grid", "columns": 3 }` |
+| `nodes[]` | | `id?` (else index), `label?`, `icon?`, `x`, `y` (0–100, omitted with structural layout), `status?`, `lifeline?` (default false; dashed vertical line under the node) |
 | `links[]` | | `from`, `to` (node ids), `arrow?` = `""` \| `"end"` \| `"both"` |
 | `packets[]` | | `label`, `from`, `to`, `progress?` (0–1, static mode, default 0.5), `window?` = `[start, end]` loop fractions (animated), `faded?` (landed style) |
 | `texts[]` | | `text`, `x`, `y`, `dim?`, `left?` (default: centered) |
 
 Static mode without `progress` parks a packet mid-flight (`0.5`). Animated
 mode without `window` assigns staggered defaults (`0.06+0.06i → 0.55+0.06i`).
-Packets at fraction ≤ 0.02 or ≥ 0.98 on a real travel path are not drawn
-(resting at an endpoint would stack the label onto the node).
+Moving packets are hidden at their endpoints. A label that would overlap a
+node moves to a nearby free slot, with a leader marking its actual position;
+labels are omitted only when no slot fits. ID-based links and packets share
+routes clipped to measured node bounds. Raw-coordinate v2 elements retain
+their world-coordinate paths.
 
 ## Universal timeline format (v2)
 
@@ -69,7 +75,8 @@ hold until the next key. No expressions, ever.
 ```
 
 - Element kinds: `node` (icon/label/status/lifeline), `line` (coords or
-  `from`/`to` node ids — id endpoints track moving nodes), `packet` (label +
+  `from`/`to` node ids — id endpoints track moving nodes), `packet` (optional
+  `from`/`to` references, label +
   flight geometry + `p` progress timeline + `landed`), `text`, `polyline`
   (flat points array, optional moving `slice` [from,to) for reveals), `path`.
 - `show` (step timeline of bool) on any element; `""` in a string timeline
@@ -107,26 +114,65 @@ explicit windows or keyframes.
 ## Output modes
 
 ```
-dynamic-diagram spec <f.json> [png]      # single frame -> <f>.png (3× scale)
+dynamic-diagram spec <f.json> [png]      # single frame -> <f>.png (density 3)
 dynamic-diagram spec <f.json> svg        # SVG to stdout
+dynamic-diagram spec <f.json> info       # JSON width, height, duration; no PNG
 dynamic-diagram spec <f.json> kitty      # single frame inline (kitty protocol)
-dynamic-diagram spec <f.json> frames <dir> [n]   # n loop frames (default 12)
+dynamic-diagram spec <f.json> frames <dir> [n]   # default ceil(duration × fps / 1000)
 dynamic-diagram spec <f.json> kitty-anim # stream frames until Ctrl+C
 dynamic-diagram spec --list-icons        # all 11,831 icon names
 dynamic-diagram skill                    # print skills/dynamic-diagram/SKILL.md
 ```
 
-Exit codes: 0 ok, 2 usage/parse error. Env: `DDA_SCALE` raster scale
-(default 3; memory ≈ 25MB @3, 16MB @2, 10MB @1 in the child process).
+Options: `--width N`, `--height N` (minimum height), `--scale N`, `--density N`,
+`--fps N` (default 30, range 1..120), `--at MS` (single-frame sample time).
+Sizes/density/fps must be positive and finite. `DDA_SCALE` remains a compatible
+default for raster density; `--density` overrides it. Exit codes: 0 success,
+2 usage/parse/render error.
 
-## Canvas geometry (SVG units)
+Frame export writes `00001.png`, …, and `frames.json` with `files`, `count`,
+`duration`, `fps`, `width`, `height`. Read the manifest to identify the current
+export; unrelated/older files in that directory are preserved. An explicit
+count must be 1..1800; derived counts are capped at 1800 and still cover the
+whole duration. PNGs are limited to 32 Mi pixels each; actual process memory
+also includes parsing, encoding and a bounded 16 MiB PNG cache.
 
-Canvas 760×330: header band 36px, stage 216px, caption band below.
-`sy(y) = 36 + y/100 × 216`. Icon nodes stack glyph (34px) + label (+30) +
-status badge (+40, height 20) ≈ 60 stage-units below `y` — keep icon nodes
-with a status badge at **y ≤ 75** so the badge clears the caption divider at
-y = 260. All text renders in Inconsolata (embedded; usvg requires single font
-names).
+## Layout and size
+
+New v1 diagrams can delegate placement to Taffy:
+
+```json
+{
+  "layout": { "mode": "grid", "columns": 2 },
+  "canvas": { "min_height": 660, "scale": 1 },
+  "nodes": [
+    { "id": "web", "icon": "phone", "label": "client", "status": "ready" },
+    { "id": "api", "icon": "dns", "label": "API", "status": "healthy" }
+  ],
+  "links": [{ "from": "web", "to": "api", "arrow": "end" }]
+}
+```
+
+`flow` wraps nodes in document order; `grid` fills rows; `columns` fills
+columns. Explicit `x`/`y` placement remains available when `layout` is absent.
+Node boxes include icons, wrapped labels and badges. Fonts and spacing come
+from shared theme metrics. Header, annotations, badge and caption reserve
+their own measured space; the canvas grows to fit. Rendering prepares the
+whole timeline, reserving each node's text states so status changes do not
+move surrounding content.
+
+`canvas.width` is the logical width (100..100000), `min_height` is a lower
+bound (up to 100000), and `scale` multiplies both displayed dimensions (up to
+64). For more space in a width-constrained terminal, request a taller canvas
+with `min_height`/`--height`. For 1.5× or 2× proportional presentation, use
+`scale`/`--scale`. `--density` only changes PNG sampling; hosts may fit the
+result to their viewport, independently of its pixel resolution.
+
+Text measurement and rasterization share embedded Inconsolata and Liberation
+Sans. They do not provide general CJK/emoji coverage. SVG consumers need the
+same fonts for matching metrics; PNG embeds the resulting pixels. Arbitrary
+v2 paths and moving raw-coordinate elements are author-controlled: inspect
+representative frames for crossings and clipping.
 
 ## Icon resolution order
 

@@ -15,16 +15,21 @@ cargo build --release                                # → target/release/dynami
 ## Writing a spec
 
 Read `skills/dynamic-diagram/SKILL.md` first (authoring steps, geometry
-rules, icon tiers); full field reference in `docs/SPEC.md`. Verify a spec by
-rendering it and looking at the PNG — collisions are coordinate bugs, not
-renderer bugs.
+rules, icon tiers); full field reference in `docs/SPEC.md`. Prefer structural
+layout for new v1 specs. Verify the PNG and representative animation frames;
+diagnose collisions against the prepared layout and the spec's intent.
 
 ## Map
 
 - `src/timeline.rs` — the universal mechanism: timeline docs (`Doc`), keyframe
   resolution (`Tl`), `frame_at(t)` → Frame, `DocSim` (Sim adapter)
 - `src/spec.rs` — v1 spec sugar (nodes/links/packets+window) → compiled to Doc
-- `src/svg.rs` — scene → SVG; owns icon tier dispatch, geometry, fonts
+- `src/layout.rs` — canvas/theme tokens, measured Taffy boxes, prepared geometry
+- `src/typography.rs` — shared embedded fonts, measured text and wrapping
+- `src/svg.rs` — prepared document + time → SVG, icon tier dispatch
+- `src/raster.rs` — reusable pixel buffer and bounded PNG cache
+- `src/terminal.rs` — host cell geometry and aspect-preserving fitting
+- `src/check.rs` + `tests/` — semantic corpus and CLI regressions
 - `src/frame.rs` — the static Frame model
 - `src/sims_data.rs` + `sims/*.json` — the 28 animations as data, embedded at
   compile time (source of truth on disk; zero per-animation Rust)
@@ -44,8 +49,9 @@ renderer bugs.
   (`Inconsolata`, `Liberation Sans`), embedded in `src/assets/fonts/`.
 - Material icon paths are 960×960 y-negative-up; scaling lives only in
   `emit_icon` (svg.rs). Don't re-scale per call site.
-- Icon node + status badge stack ≈ 60 stage-units below `y`; specs keep such
-  nodes at y ≤ 75 (caption divider collision otherwise).
+- Layout metrics live in `Theme`; change them there, then measure node boxes.
+  `canvas.min_height` adds room; `canvas.scale` scales the whole presentation;
+  raster `--density` affects pixel sampling only. See `docs/SPEC.md`.
 
 ## Related project
 

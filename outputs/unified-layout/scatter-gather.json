@@ -1,0 +1,121 @@
+{
+  "header": "CHECKOUT API ·· scatter-gather",
+  "duration": 6000,
+  "anim": "fanout",
+  "badge": "p99 240ms",
+  "note": "one request fanned out to 4 services, aggregated back",
+  "nodes": [
+    {
+      "id": "client",
+      "label": "client",
+      "icon": "smartphone",
+      "x": 10,
+      "y": 42,
+      "status": "user"
+    },
+    {
+      "id": "api",
+      "label": "gateway",
+      "icon": "router",
+      "x": 30,
+      "y": 42,
+      "status": "graphql"
+    },
+    {
+      "id": "users",
+      "label": "users",
+      "icon": "ti/user",
+      "x": 68,
+      "y": 12,
+      "status": "40ms"
+    },
+    {
+      "id": "orders",
+      "label": "orders",
+      "icon": "ti/shopping-cart",
+      "x": 68,
+      "y": 32,
+      "status": "65ms"
+    },
+    {
+      "id": "inv",
+      "label": "inventory",
+      "icon": "ti/box",
+      "x": 68,
+      "y": 52,
+      "status": "55ms"
+    },
+    {
+      "id": "recs",
+      "label": "recs",
+      "icon": "ti/sparkles",
+      "x": 68,
+      "y": 72,
+      "status": "120ms"
+    }
+  ],
+  "links": [
+    {
+      "from": "client",
+      "to": "api"
+    },
+    {
+      "from": "api",
+      "to": "users"
+    },
+    {
+      "from": "api",
+      "to": "orders"
+    },
+    {
+      "from": "api",
+      "to": "inv"
+    },
+    {
+      "from": "api",
+      "to": "recs"
+    }
+  ],
+  "packets": [
+    {
+      "label": "query",
+      "from": "api",
+      "to": "users"
+    },
+    {
+      "label": "query",
+      "from": "api",
+      "to": "orders"
+    },
+    {
+      "label": "query",
+      "from": "api",
+      "to": "inv"
+    },
+    {
+      "label": "query",
+      "from": "api",
+      "to": "recs"
+    },
+    {
+      "label": "profile",
+      "from": "users",
+      "to": "api"
+    },
+    {
+      "label": "cart",
+      "from": "orders",
+      "to": "api"
+    },
+    {
+      "label": "stock",
+      "from": "inv",
+      "to": "api"
+    },
+    {
+      "label": "picks",
+      "from": "recs",
+      "to": "api"
+    }
+  ]
+}

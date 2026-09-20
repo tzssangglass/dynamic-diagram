@@ -1,11 +1,4 @@
 // bisect: which db contents make "Source Sans 3" / "DejaVu Sans" garble?
-fn render(svg: &str, db: resvg::usvg::fontdb::Database) -> bool {
-    // returns true if rendered text differs from a known-good reference render
-    // (we compare against the same text in Inconsolata which is proven correct)
-    let _ = db;
-    false
-}
-
 fn main() {
     let text = "CLIENT";
     let mk = |fam: &str| {

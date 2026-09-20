@@ -45,7 +45,11 @@ impl Tl<f64> {
                     if t <= w[1].0 {
                         let (t0, v0) = w[0];
                         let (t1, v1) = w[1];
-                        let f = if t1 == t0 { 0.0 } else { (t - t0) as f64 / (t1 - t0) as f64 };
+                        let f = if t1 == t0 {
+                            0.0
+                        } else {
+                            (t - t0) as f64 / (t1 - t0) as f64
+                        };
                         return v0 + (v1 - v0) * f;
                     }
                 }
@@ -72,8 +76,16 @@ impl Tl<Vec<f64>> {
                         break;
                     }
                 }
-                let f = if *span.2 == *span.0 { 0.0 } else { (t - *span.0) as f64 / (*span.2 - *span.0) as f64 };
-                span.1.iter().zip(span.3).map(|(x, y)| x + (y - x) * f).collect()
+                let f = if *span.2 == *span.0 {
+                    0.0
+                } else {
+                    (t - *span.0) as f64 / (*span.2 - *span.0) as f64
+                };
+                span.1
+                    .iter()
+                    .zip(span.3)
+                    .map(|(x, y)| x + (y - x) * f)
+                    .collect()
             }
         }
     }
@@ -115,6 +127,8 @@ pub struct LineEl {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct PacketEl {
+    pub from: Option<String>,
+    pub to: Option<String>,
     pub label: String,
     pub x1: Tl<f64>,
     pub y1: Tl<f64>,
@@ -169,6 +183,11 @@ pub enum El {
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Doc {
+    /// v1 authoring intent retained so canvas overrides can reflow measured boxes.
+    #[serde(skip)]
+    pub structural: Option<crate::layout::Structural>,
+    #[serde(default)]
+    pub canvas: crate::layout::Canvas,
     /// ms per loop; None = static single frame
     pub duration: Option<u64>,
     pub header: Option<Tl<String>>,
@@ -199,7 +218,11 @@ impl Doc {
                     label: n.label.as_ref().map(|l| l.step(t)).unwrap_or_default(),
                     x,
                     y,
-                    status: n.status.as_ref().map(|s| s.step(t)).filter(|s| !s.is_empty()),
+                    status: n
+                        .status
+                        .as_ref()
+                        .map(|s| s.step(t))
+                        .filter(|s| !s.is_empty()),
                     lifeline: n.lifeline,
                     icon: n.icon.clone(),
                 });
@@ -267,12 +290,18 @@ impl Doc {
                     let full = pl.points.at_arr(t);
                     let n = full.len() / 2;
                     let (a, b) = match &pl.slice {
-                        Some((f, to)) => (f.at(t).round().clamp(0.0, n as f64) as usize, to.at(t).round().clamp(0.0, n as f64) as usize),
+                        Some((f, to)) => (
+                            f.at(t).round().clamp(0.0, n as f64) as usize,
+                            to.at(t).round().clamp(0.0, n as f64) as usize,
+                        ),
                         None => (0, n),
                     };
                     let (a, b) = (a.min(b), b.max(a));
                     let pts = full[a * 2..b * 2].chunks(2).map(|c| (c[0], c[1])).collect();
-                    polylines.push(PolylineSpec { points: pts, dim: pl.dim });
+                    polylines.push(PolylineSpec {
+                        points: pts,
+                        dim: pl.dim,
+                    });
                 }
                 El::Path(p) => {
                     if p.show.as_ref().is_some_and(|s| !s.step(t)) {
@@ -290,8 +319,17 @@ impl Doc {
             texts,
             polylines,
             paths,
-            badge: self.badge.as_ref().map(|b| b.step(t)).filter(|s| !s.is_empty()),
-            note: self.note.as_ref().map(|n| n.step(t)).filter(|s| !s.is_empty()).unwrap_or_default(),
+            badge: self
+                .badge
+                .as_ref()
+                .map(|b| b.step(t))
+                .filter(|s| !s.is_empty()),
+            note: self
+                .note
+                .as_ref()
+                .map(|n| n.step(t))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default(),
         }
     }
 }
@@ -310,5 +348,124 @@ impl Sim for DocSim {
 }
 
 pub fn parse_doc(json: &str) -> Result<Doc, String> {
-    serde_json::from_str(json).map_err(|e| format!("doc parse: {e}"))
+    let doc: Doc = serde_json::from_str(json).map_err(|e| format!("doc parse: {e}"))?;
+    doc.validate()?;
+    Ok(doc)
+}
+
+impl<T> Tl<T> {
+    fn validate(&self, name: &str, check: impl Fn(&T) -> bool) -> Result<(), String> {
+        match self {
+            Self::Const(value) if check(value) => Ok(()),
+            Self::Keyed(keys)
+                if !keys.is_empty()
+                    && keys.windows(2).all(|pair| pair[0].0 <= pair[1].0)
+                    && keys.iter().all(|(_, value)| check(value)) =>
+            {
+                Ok(())
+            }
+            _ => Err(format!(
+                "{name}: expected a valid constant or nonempty, ordered keyframes"
+            )),
+        }
+    }
+}
+
+impl Doc {
+    pub fn validate(&self) -> Result<(), String> {
+        self.canvas.validate()?;
+        let coordinate =
+            |v: &Tl<f64>| v.validate("coordinate", |x| x.is_finite() && (0. ..=100.).contains(x));
+        let finite = |v: &Tl<f64>| v.validate("number", |x| x.is_finite());
+        let visible = |v: &Option<Tl<bool>>| match v {
+            Some(v) => v.validate("visibility", |_| true),
+            None => Ok(()),
+        };
+        let string = |v: &Tl<String>| v.validate("text", |s| crate::typography::valid_text(s));
+        for v in [&self.header, &self.badge, &self.note]
+            .into_iter()
+            .flatten()
+        {
+            string(v)?;
+        }
+        let mut ids = std::collections::HashSet::new();
+        for el in &self.els {
+            if let El::Node(n) = el {
+                if let Some(id) = &n.id {
+                    if !ids.insert(id) {
+                        return Err(format!("duplicate node id {id:?}"));
+                    }
+                }
+            }
+        }
+        let reference = |id: &Option<String>| {
+            if id.as_ref().is_some_and(|id| !ids.contains(id)) {
+                Err(format!("unknown node {id:?}"))
+            } else {
+                Ok(())
+            }
+        };
+        for el in &self.els {
+            match el {
+                El::Node(n) => {
+                    coordinate(&n.x)?;
+                    coordinate(&n.y)?;
+                    visible(&n.show)?;
+                    for s in [&n.label, &n.status].into_iter().flatten() {
+                        string(s)?;
+                    }
+                }
+                El::Line(l) => {
+                    for v in [&l.x1, &l.y1, &l.x2, &l.y2].into_iter().flatten() {
+                        coordinate(v)?;
+                    }
+                    reference(&l.from)?;
+                    reference(&l.to)?;
+                    visible(&l.show)?;
+                }
+                El::Packet(p) => {
+                    for v in [&p.x1, &p.y1, &p.x2, &p.y2] {
+                        coordinate(v)?;
+                    }
+                    finite(&p.p)?;
+                    visible(&p.show)?;
+                    p.landed.validate("landed", |_| true)?;
+                    reference(&p.from)?;
+                    reference(&p.to)?;
+                    string(&Tl::Const(p.label.clone()))?;
+                }
+                El::Text(t) => {
+                    coordinate(&t.x)?;
+                    coordinate(&t.y)?;
+                    string(&t.text)?;
+                    visible(&t.show)?;
+                    t.dim.validate("dim", |_| true)?;
+                }
+                El::Polyline(p) => {
+                    let mut length = None;
+                    p.points.validate("points", |points| {
+                        points.len() % 2 == 0 && points.iter().all(|x| x.is_finite())
+                    })?;
+                    if let Tl::Keyed(keys) = &p.points {
+                        for (_, points) in keys {
+                            if length.is_some_and(|len| len != points.len()) {
+                                return Err("keyed point arrays must have equal lengths".into());
+                            }
+                            length = Some(points.len());
+                        }
+                    }
+                    if let Some((a, b)) = &p.slice {
+                        finite(a)?;
+                        finite(b)?;
+                    }
+                    visible(&p.show)?;
+                }
+                El::Path(p) => {
+                    visible(&p.show)?;
+                    string(&Tl::Const(p.d.clone()))?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
