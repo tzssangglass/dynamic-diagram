@@ -4,16 +4,33 @@
 # understood by cargo-binstall, rsign and every minisign release.
 name: sign-release
 
+# NOTE: cargo-dist creates the GitHub release with the workflow's built-in
+# GITHUB_TOKEN, and GitHub never lets GITHUB_TOKEN-created events trigger
+# more workflows (recursion guard). `release: published` alone therefore
+# never fires — workflow_run on the Release workflow completing is the
+# documented workaround. workflow_dispatch covers retroactive signing.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to sign (e.g. v0.2.0)"
+        required: true
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
 
 permissions:
   contents: write
 
 jobs:
   sign:
+    # skip non-tag completions of the Release workflow (e.g. PR plan runs)
+    if: github.event_name != 'workflow_run' || startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.workflow_run.head_branch || github.ref_name }}
     steps:
       - name: Install minisign 0.12
         run: |
@@ -25,7 +42,7 @@ jobs:
           MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
         run: |
           printf '%s' "$MINISIGN_PRIVATE_KEY" > "$RUNNER_TEMP/signing.key"
-          tag="$GITHUB_REF_NAME"
+          tag="$TAG"
           mkdir assets && cd assets
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
             -p '*.tar.gz' -p '*.zip' -p '*.msi' -p 'sha256.sum' \
