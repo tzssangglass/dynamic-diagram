@@ -2,6 +2,39 @@
 name = "dynamic-diagram"
 version = "0.2.0"
 edition = "2021"
+description = "Portable diagram/simulation engine: JSON spec -> SVG/PNG/kitty/animated frames"
+license = "MIT"
+authors = ["kurt tu <tzssangglass@gmail.com>"]
+repository = "https://github.com/tzssangglass/dynamic-diagram"
+homepage = "https://github.com/tzssangglass/dynamic-diagram"
+readme = "README.md"
+keywords = ["diagram", "svg", "rendering", "animation", "visualization"]
+categories = ["command-line-utilities", "graphics"]
+# src/assets/ is compile-time embedded (include_str!) — never exclude it.
+# sims/ is a repo-local test corpus (runtime-loaded) — deliberately not shipped.
+exclude = ["/outputs", "/.perf", "/.diagrams", "/.github", "/docs", "/sims"]
+
+[package.metadata.wix]
+upgrade-guid = "28673494-EE97-4278-8EED-E3B86694673A"
+path-guid = "526FA9AC-3E9C-40FC-BD59-56A5E6AFA368"
+license = false
+eula = false
+
+# cargo-binstall: point at dist's GitHub Releases layout ({name}-{target} archives under the v{version} tag)
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"
+
+# release signatures: every GitHub Releases asset ships a minisign .sig
+# (signed with -l, the ecosystem-standard format; see signing.pub).
+# binstall downloads {url}.sig and verifies automatically.
+[package.metadata.binstall.signing]
+algorithm = "minisign"
+pubkey = "RWQH1BCw/M2EcXI5QIwhjjTou5lMmXyB+hoQ9qlRLr5kuekgWjCAWaRw"
 
 [dependencies]
 signal-hook = "0.3"
@@ -14,3 +47,8 @@ taffy = { version = "0.14", default-features = false, features = ["std", "taffy_
 
 [profile.release]
 opt-level = 3
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

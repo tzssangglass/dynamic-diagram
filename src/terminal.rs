@@ -37,12 +37,11 @@ impl Geometry {
         geometry
     }
 
-    pub fn fit(self, width: f64, height: f64) -> (u32, u32) {
+    pub fn fit(self, width: f64, height: f64, display_scale: f64) -> (u32, u32) {
         let max_cols = self.columns.saturating_sub(2).max(1);
         let max_rows = self.rows.saturating_sub(2).max(1);
         let aspect = height / width * self.cell_aspect;
-        let columns = (max_cols as f64)
-            .min(max_rows as f64 / aspect)
+        let columns = ((max_cols as f64).min(max_rows as f64 / aspect) * display_scale.min(1.))
             .floor()
             .max(1.) as u32;
         let rows = (columns as f64 * aspect)
@@ -63,8 +62,11 @@ mod tests {
             rows: 22,
             cell_aspect: 0.5,
         };
-        assert_eq!(terminal.fit(100., 100.), (40, 20));
-        assert_eq!(terminal.fit(200., 100.), (80, 20));
-        assert_eq!(terminal.fit(500., 100.), (100, 10));
+        assert_eq!(terminal.fit(100., 100., 1.), (40, 20));
+        assert_eq!(terminal.fit(200., 100., 1.), (80, 20));
+        assert_eq!(terminal.fit(500., 100., 1.), (100, 10));
+        assert_eq!(terminal.fit(100., 100., 0.75), (30, 15));
+        assert_eq!(terminal.fit(500., 100., 0.75), (75, 8));
+        assert_eq!(terminal.fit(100., 100., 2.), (40, 20));
     }
 }

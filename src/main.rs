@@ -25,8 +25,14 @@ const DEFAULT_FPS: f64 = 30.;
 const MAX_EXPORT_FRAMES: u64 = 1800;
 
 fn get_doc(name: &str) -> timeline::Doc {
-    let json = sims_data::get(name).unwrap_or_else(|| sims_data::get("tcphs").unwrap());
-    timeline::parse_doc(json).unwrap_or_else(|e| {
+    let name = if name.is_empty() { "tcphs" } else { name };
+    let Some(json) = sims_data::get(name) else {
+        eprintln!(
+            "sim {name:?} not found: sims/ is a repo-local test corpus — run from a dynamic-diagram checkout"
+        );
+        std::process::exit(2)
+    };
+    timeline::parse_doc(&json).unwrap_or_else(|e| {
         eprintln!("sim {name:?}: {e}");
         std::process::exit(2)
     })
@@ -184,11 +190,12 @@ fn spec_mode(path: &str, args: Vec<String>) -> Result<()> {
     }
     let renderer = svg::Renderer::new(&doc)?;
     let (width, height) = renderer.size();
+    let display_scale = doc.canvas.display_scale();
     let mut raster = raster::Rasterizer::new();
     match mode {
         "info" => println!(
             "{}",
-            serde_json::json!({"width":width,"height":height,"duration":doc.duration})
+            serde_json::json!({"width":width,"height":height,"display_scale":display_scale,"duration":doc.duration})
         ),
         "svg" => print!("{}", renderer.render(options.at)),
         "png" => {
@@ -199,7 +206,7 @@ fn spec_mode(path: &str, args: Vec<String>) -> Result<()> {
         }
         "kitty" => {
             let png = raster.render(&renderer.render(options.at), options.density)?;
-            let (cols, rows) = terminal::Geometry::current().fit(width, height);
+            let (cols, rows) = terminal::Geometry::current().fit(width, height, display_scale);
             print!("{}", kitty::kitty_png(&png, cols, rows));
         }
         "frames" => {
@@ -233,7 +240,7 @@ fn spec_mode(path: &str, args: Vec<String>) -> Result<()> {
             }
             // Manifest identifies this export exactly; unrelated files in the
             // supplied directory are never silently deleted.
-            let manifest = serde_json::json!({"width":width,"height":height,"duration":duration,"count":count,"fps":count as f64*1000./duration as f64,"files":files});
+            let manifest = serde_json::json!({"width":width,"height":height,"display_scale":display_scale,"duration":duration,"count":count,"fps":count as f64*1000./duration as f64,"files":files});
             std::fs::write(
                 dir.join("frames.json"),
                 serde_json::to_vec_pretty(&manifest)?,
@@ -269,7 +276,7 @@ fn play(mut doc: timeline::Doc, options: OutputOptions) -> Result<()> {
         let frame = (|| -> Result<()> {
             let png = raster.render(&renderer.render(t), options.density)?;
             let (w, h) = renderer.size();
-            let (cols, rows) = terminal::Geometry::current().fit(w, h);
+            let (cols, rows) = terminal::Geometry::current().fit(w, h, doc.canvas.display_scale());
             write!(out, "\x1b[H{}", kitty::kitty_png(&png, cols, rows))?;
             out.flush()?;
             Ok(())

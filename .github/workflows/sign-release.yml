@@ -1,0 +1,38 @@
+# Signs every release asset with minisign and uploads the .sig files.
+# Key: signing.key (repo-local, gitignored) / signing.pub (committed).
+# The -l format is the ecosystem-standard minisign signature (pure Ed25519)
+# understood by cargo-binstall, rsign and every minisign release.
+name: sign-release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install minisign 0.12
+        run: |
+          curl -sL https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz | tar xz
+          sudo install -m755 minisign-linux/x86_64/minisign /usr/local/bin/minisign
+      - name: Sign release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$MINISIGN_PRIVATE_KEY" > "$RUNNER_TEMP/signing.key"
+          tag="$GITHUB_REF_NAME"
+          mkdir assets && cd assets
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+            -p '*.tar.gz' -p '*.zip' -p '*.msi' -p 'sha256.sum' \
+            -p '*installer.sh' -p '*installer.ps1'
+          for f in *; do
+            minisign -S -l -W -s "$RUNNER_TEMP/signing.key" -x "$f.sig" -m "$f" \
+              -c "signature for $f" -t "trusted comment: dynamic-diagram $tag $f"
+            rm "$f"
+          done
+          gh release upload "$tag" ./*.sig --repo "$GITHUB_REPOSITORY" --clobber

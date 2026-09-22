@@ -73,6 +73,30 @@ fn display_scale_doubles_svg_and_density_only_changes_png() {
 }
 
 #[test]
+fn default_presentation_scales_exports_and_terminal_placement_together() {
+    let f = Fixture::new(r#"{"duration":1000,"canvas":{"width":800,"min_height":400},"nodes":[]}"#);
+    assert_eq!(svg_size(&f.run(&["svg"])), (600., 300.));
+    let info: serde_json::Value = serde_json::from_slice(&f.run(&["info"]).stdout).unwrap();
+    assert_eq!(info["display_scale"], 0.75);
+    let dir = f.0.join("scaled-frames");
+    assert!(f
+        .run(&["frames", dir.to_str().unwrap(), "2", "--density", "2"])
+        .status
+        .success());
+    assert_eq!(png_size(&dir.join("00001.png")), (1200, 600));
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("frames.json")).unwrap()).unwrap();
+    assert_eq!(manifest["display_scale"], info["display_scale"]);
+    // Pipes use the 80x24 fallback terminal. The original 78x20 placement
+    // becomes 58x15, independent of raster density.
+    for density in ["1", "2"] {
+        let output = f.run(&["kitty", "--density", density]);
+        assert!(output.status.success());
+        assert!(String::from_utf8_lossy(&output.stdout).contains("c=58,r=15"));
+    }
+}
+
+#[test]
 fn invalid_and_oversized_output_options_return_diagnostics() {
     let f = Fixture::new(r#"{"nodes":[]}"#);
     for args in [
@@ -100,8 +124,8 @@ fn info_reports_display_size_and_duration_without_writing_a_poster() {
     assert!(result.status.success());
     let info: serde_json::Value =
         serde_json::from_slice(&result.stdout).expect("info must be JSON");
-    assert_eq!(info["width"], 1520.);
-    assert!(info["height"].as_f64().unwrap() >= 1320.);
+    assert_eq!(info["width"], 1140.);
+    assert!(info["height"].as_f64().unwrap() >= 990.);
     assert_eq!(info["duration"], 1000);
     assert!(!f.0.join("scene.png").exists());
 }

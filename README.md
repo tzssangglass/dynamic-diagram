@@ -3,7 +3,56 @@
 Portable diagram/simulation engine (Rust). Two ways in:
 
 1. **Declarative spec** — a JSON document describes the picture, render anywhere.
-2. **Sims** — 28 faithful ports of fazamhd.com's interactive network diagrams.
+2. **Sims** — 28 reference animations (repo-local test corpus; not shipped in releases).
+
+## Install
+
+Prebuilt binaries (linux/macOS/Windows) are on
+[GitHub Releases](https://github.com/tzssangglass/dynamic-diagram/releases):
+
+```sh
+# shell installer (linux/macOS):
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/tzssangglass/dynamic-diagram/releases/latest/download/dynamic-diagram-installer.sh | sh
+
+# PowerShell (Windows):
+irm https://github.com/tzssangglass/dynamic-diagram/releases/latest/download/dynamic-diagram-installer.ps1 | iex
+
+# via cargo, prebuilt (no compile):
+cargo binstall dynamic-diagram
+
+# via cargo, from source:
+cargo install --locked dynamic-diagram
+```
+
+Also on npm (`npm install -g dynamic-diagram`) and Homebrew
+(`brew install tzssangglass/tap/dynamic-diagram`).
+
+## Verifying releases
+
+Every release asset ships a minisign signature (`<file>.sig`), and CI emits
+GitHub artifact attestations (Sigstore build provenance):
+
+```sh
+# minisign signature (any asset — archives, msi, sha256.sum, installers):
+minisign -Vm dynamic-diagram-x86_64-unknown-linux-musl.tar.gz \
+  -P RWQH1BCw/M2EcXI5QIwhjjTou5lMmXyB+hoQ9qlRLr5kuekgWjCAWaRw
+
+# build provenance (requires the gh CLI):
+gh attestation verify dynamic-diagram-x86_64-unknown-linux-musl.tar.gz \
+  --repo tzssangglass/dynamic-diagram
+
+# cargo binstall verifies signatures automatically (pubkey pinned in crate metadata):
+cargo binstall dynamic-diagram
+
+# release tags are signed:
+git tag --verify v0.2.0
+```
+
+The signing public key is [`signing.pub`](signing.pub); the private key
+(`signing.key`, gitignored) stays offline. crates.io / npm / Homebrew verify
+integrity in-band (registry checksums, formula checksums) on every install.
+Windows MSI Authenticode signing requires a purchased certificate and is not
+enabled; every other asset is signed.
 
 ## The spec format (`dynamic-diagram spec <file.json> [svg|png|kitty]`)
 
@@ -32,7 +81,9 @@ coordinates. Existing fixed-coordinate specs use 0..100 scene space.
 `status` is a badge under a node; `arrow` is `"end"` or `"both"`.
 See `examples/network.json` and `examples/auto-layout.json`.
 
-Canvas height follows content. `canvas.min_height` adds space, while
+Presentation defaults to 75% of the logical canvas size, uniformly scaling
+text, icons, routes and spacing. Canvas height follows content.
+`canvas.min_height` adds space, while
 `canvas.scale` enlarges the complete presentation without changing layout:
 
 ```sh
@@ -40,9 +91,11 @@ dynamic-diagram spec examples/auto-layout.json png --height 660
 dynamic-diagram spec examples/auto-layout.json png --scale 2 --density 2
 ```
 
-`--density` controls raster resolution independently. Terminal/browser hosts
-fit the image to the available viewport; a larger display scale cannot exceed
-the physical viewport. Use more content height for a taller inline diagram.
+`canvas.scale` / `--scale` multiply this baseline; `--scale 1.3333333333333333`
+restores the previous size. `--density` controls raster resolution independently.
+Kitty playback and pi inline animation apply the same presentation factor to
+viewport fitting, capped by the available space. Other image viewers (including
+pi's native static-image viewer) may fit images to their own viewport.
 
 ### Icons
 
@@ -61,7 +114,7 @@ the physical viewport. Use more content height for a taller inline diagram.
 ## Architecture
 
 ```
-timeline docs (sims/*.json, embedded at build) ─┐
+timeline docs (repo-local sims/*.json) ─┐
 spec JSON (v1 sugar) ───────────────────────────┼─→ Doc ─→ prepared layout
                                                         + Frame(t) ─→ SVG ─┬─→ browser
                                                                           ├─→ PNG (resvg)
@@ -72,7 +125,8 @@ spec JSON (v1 sugar) ───────────────────�
   time-lines (constants or keyframes; numbers lerp, strings step). `frame_at(t)`
   resolves a doc into a static Frame — no per-animation code anywhere.
 - The 28 network sims (TCP handshake, DNS, QUIC, BGP, …) are pure data in
-  `sims/`, embedded into the binary at compile time (self-contained, any cwd).
+  `sims/`, a repo-local corpus loaded at runtime (regression fixtures for
+  `check`; not shipped in releases).
 - Taffy composes measured node boxes and page bands. `src/layout.rs` owns
   geometry and theme metrics; `src/typography.rs` shares fonts with resvg.
 - `src/svg.rs::Renderer` prepares stable document geometry once. Rasterization
@@ -100,7 +154,7 @@ tcphs (default) · encap · arp · modem · vpn · ipbits · checksum · bgp · 
 tcpvsudp · anycast · dialup · dh · routerhop · switchlearn · mtu · tls · tcpsim ·
 igp · wdm · nat · dns · bandwidth · telegraph · netsim · msgjourney · linkclick · quic
 
-Each is a timeline document in `sims/<name>.json` (embedded at build) — the
+Each is a timeline document in `sims/<name>.json` (repo-local, loaded at runtime) — the
 **seed corpus**: regression fixtures for `check`, plus few-shot style
 references for AI-generated animations. Not a coverage library: the mechanism
 is the product, `anim` verbs + keyframes scale it (see

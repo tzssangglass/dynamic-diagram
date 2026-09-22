@@ -138,7 +138,7 @@ fn requested_height_provides_more_content_room() {
         "../outputs/unified-layout/scatter-gather.json"
     ));
     let a = svg::Renderer::new(&d).unwrap();
-    d.canvas.min_height = a.size().1 * 2.;
+    d.canvas.min_height = a.size().1 / d.canvas.display_scale() * 2.;
     let b = svg::Renderer::new(&d).unwrap();
     assert!(b.size().1 >= a.size().1 * 2. - 0.01);
     assert_text_geometry(&b.render(0));

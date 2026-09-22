@@ -1,0 +1,26 @@
+[workspace]
+members = ["cargo:."]
+
+# Config for 'dist'
+[dist]
+# The preferred dist version to use in CI (Cargo.toml SemVer syntax)
+cargo-dist-version = "0.33.0"
+# CI backends to support
+ci = "github"
+# The installers to generate for each app
+installers = ["shell", "powershell", "npm", "homebrew", "msi"]
+# Target platforms to build apps for (Rust target-triple syntax)
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "x86_64-unknown-linux-musl", "x86_64-pc-windows-msvc"]
+# Checksum for each release artifact
+checksum = "sha256"
+# tar.gz for maximal unpack compat (busybox tar can't always read xz)
+unix-archive = ".tar.gz"
+# Sigstore build-provenance attestations for release artifacts
+# (verify: gh attestation verify <file> --repo tzssangglass/dynamic-diagram)
+github-attestations = true
+# Homebrew tap to publish the formula to
+tap = "tzssangglass/homebrew-tap"
+# npm package name for the npm installer
+npm-package = "dynamic-diagram"
+# Publish jobs to run after a successful release
+publish-jobs = ["homebrew", "npm"]

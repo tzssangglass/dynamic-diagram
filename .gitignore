@@ -1,2 +1,5 @@
 /target
 /.diagrams
+/outputs
+/.perf
+/signing.key

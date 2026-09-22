@@ -1,0 +1,17 @@
+name: publish-crate
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  crates-io:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        run: cargo publish --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}

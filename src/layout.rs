@@ -7,6 +7,10 @@ use crate::{
 };
 use serde::Deserialize;
 use taffy::prelude::*;
+
+/// Shared presentation baseline; logical layout and raster density stay independent.
+const PRESENTATION_SCALE: f64 = 0.75;
+
 #[derive(Deserialize, Clone, Copy, Debug)]
 #[serde(default, deny_unknown_fields)]
 pub struct Canvas {
@@ -24,6 +28,10 @@ impl Default for Canvas {
     }
 }
 impl Canvas {
+    pub fn display_scale(&self) -> f64 {
+        PRESENTATION_SCALE * self.scale
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         for (name, v) in [
             ("width", self.width),

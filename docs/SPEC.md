@@ -131,7 +131,9 @@ default for raster density; `--density` overrides it. Exit codes: 0 success,
 2 usage/parse/render error.
 
 Frame export writes `00001.png`, …, and `frames.json` with `files`, `count`,
-`duration`, `fps`, `width`, `height`. Read the manifest to identify the current
+`duration`, `fps`, `width`, `height`, `display_scale`. `info` also reports
+`display_scale`, the effective presentation factor for viewport fitting.
+Read the manifest to identify the current
 export; unrelated/older files in that directory are preserved. An explicit
 count must be 1..1800; derived counts are capped at 1800 and still cover the
 whole duration. PNGs are limited to 32 Mi pixels each; actual process memory
@@ -162,11 +164,17 @@ whole timeline, reserving each node's text states so status changes do not
 move surrounding content.
 
 `canvas.width` is the logical width (100..100000), `min_height` is a lower
-bound (up to 100000), and `scale` multiplies both displayed dimensions (up to
-64). For more space in a width-constrained terminal, request a taller canvas
-with `min_height`/`--height`. For 1.5× or 2× proportional presentation, use
-`scale`/`--scale`. `--density` only changes PNG sampling; hosts may fit the
-result to their viewport, independently of its pixel resolution.
+bound (up to 100000). Presentation uses a shared baseline of **0.75** times
+the logical dimensions. `scale` (default 1, up to 64) multiplies that baseline;
+`scale: 2` doubles the new default and `scale: 1.3333333333333333` restores the
+previous size. Layout, wrapping and relative node positions stay unchanged.
+For more logical space, use `min_height`/`--height`.
+
+`--density` only changes PNG sampling. Kitty playback and pi inline animation
+fit the original aspect ratio to their viewport, then apply `display_scale`
+(capped at 1 so the image stays inside the viewport). This prevents fitting
+from cancelling a requested reduction. Pi's native static-image viewer and
+other image viewers control their own viewport fitting.
 
 Text measurement and rasterization share embedded Inconsolata and Liberation
 Sans. They do not provide general CJK/emoji coverage. SVG consumers need the

@@ -31,8 +31,9 @@ diagnose collisions against the prepared layout and the spec's intent.
 - `src/terminal.rs` — host cell geometry and aspect-preserving fitting
 - `src/check.rs` + `tests/` — semantic corpus and CLI regressions
 - `src/frame.rs` — the static Frame model
-- `src/sims_data.rs` + `sims/*.json` — the 28 animations as data, embedded at
-  compile time (source of truth on disk; zero per-animation Rust)
+- `src/sims_data.rs` + `sims/*.json` — the 28 animations as data, loaded at
+  runtime from the repo-local `sims/` corpus (source of truth on disk; zero
+  per-animation Rust; excluded from the published crate)
 - `src/assets/` — icon tables (`material-symbols.txt` 960-grid fill paths,
   `tabler-icons.txt` 24-grid stroke, `cloud-icons.txt` full-color fragments),
   embedded fonts
@@ -42,7 +43,7 @@ diagnose collisions against the prepared layout and the spec's intent.
 ## Gotchas
 
 - Content is data: never add per-animation Rust — new sims are timeline docs
-  in `sims/` (then a line in `src/sims_data.rs` via its generator comment)
+  dropped into `sims/` (no registration; `check` and sim players find them by name)
 - No expressions in docs, ever: keyframes only (numbers lerp, strings step);
   computed content is precomputed at authoring time
 - usvg can't parse comma font lists — fonts are single names

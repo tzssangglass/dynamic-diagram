@@ -145,8 +145,8 @@ impl Renderer {
     }
     pub fn size(&self) -> (f64, f64) {
         (
-            self.plan.width * self.plan.canvas.scale,
-            self.plan.height * self.plan.canvas.scale,
+            self.plan.width * self.plan.canvas.display_scale(),
+            self.plan.height * self.plan.canvas.display_scale(),
         )
     }
     pub fn render(&self, t: u64) -> String {
@@ -288,7 +288,7 @@ fn render(
     let th = p.theme;
     let (w, h) = (p.width, p.height);
     let mut out = String::with_capacity(16384);
-    out.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {w} {h}\" font-family=\"{FONT_MONO}\">\n",w*p.canvas.scale,h*p.canvas.scale));
+    out.push_str(&format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {w} {h}\" font-family=\"{FONT_MONO}\">\n",w*p.canvas.display_scale(),h*p.canvas.display_scale()));
     out.push_str(&format!("<rect width=\"{w}\" height=\"{h}\" fill=\"{PAGE}\"/><g stroke-width=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" rx=\"{}\" fill=\"none\" stroke=\"{LINE}\"/>\n",th.border,th.border/2.,th.border/2.,w-th.border,h-th.border,th.corner_radius));
     if let Some(header) = &f.header {
         let parts = header.split("··").map(str::trim).collect::<Vec<_>>();
