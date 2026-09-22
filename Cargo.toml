@@ -1,6 +1,6 @@
 [package]
 name = "dynamic-diagram"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Portable diagram/simulation engine: JSON spec -> SVG/PNG/kitty/animated frames"
 license = "MIT"
@@ -24,7 +24,8 @@ eula = false
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
 pkg-fmt = "tgz"
-bin-dir = "{ bin }{ binary-ext }"
+# cargo-dist archives root files under a "{name}-{target}/" directory
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-fmt = "zip"
