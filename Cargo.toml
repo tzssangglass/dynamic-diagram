@@ -1,6 +1,6 @@
 [package]
 name = "dynamic-diagram"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Portable diagram/simulation engine: JSON spec -> SVG/PNG/kitty/animated frames"
 license = "MIT"
