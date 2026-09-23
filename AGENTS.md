@@ -56,6 +56,7 @@ diagnose collisions against the prepared layout and the spec's intent.
 
 ## Related project
 
-The pi extension that drives this engine lives separately in
-`../pi-diagram` (tool `diagram`, `/diagram`, `/anim`). It only needs the
-binary on PATH or `DYNAMIC_DIAGRAM_BIN`.
+`../pi-diagram` is the personal (not npm-published) pi extension driving this
+engine (tool `diagram`, `/diagram`). Engine resolution: `DYNAMIC_DIAGRAM_BIN`
+→ vendored `vendor/bin` (postinstall minisign-verified download from this
+repo's Releases) → PATH (`cargo binstall dynamic-diagram`).
