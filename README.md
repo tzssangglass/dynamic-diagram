@@ -5,6 +5,12 @@ Portable diagram/simulation engine (Rust). Two ways in:
 1. **Declarative spec** — a JSON document describes the picture, render anywhere.
 2. **Sims** — 28 reference animations (repo-local test corpus; not shipped in releases).
 
+![dynamic-diagram in pi: spec → PNG, in-process](assets/how-it-works.gif)
+
+*Rendered by the engine itself ([spec](assets/how-it-works.json)): pi's `diagram`
+tool hands a JSON spec to the binary, which parses, measures, renders and
+rasters it in-process — the PNG lands inline in the chat.*
+
 ## Install
 
 Prebuilt binaries (linux/macOS/Windows) are on
@@ -184,7 +190,7 @@ the binary.
    skill — an agent that has never seen this repo can render diagrams after
    reading one command's output.
 
-The full spec reference is `docs/SPEC.md`; authoring steps, geometry rules,
-and icon tiers are in `skills/dynamic-diagram/SKILL.md`. The [pi-diagram]
+Authoring steps, geometry rules, and icon tiers are in
+`skills/dynamic-diagram/SKILL.md` — print it anywhere with `dynamic-diagram skill`. The [pi-diagram]
 (../pi-diagram) extension embeds the compact spec doc in its tool description,
 so LLMs using that tool need no other files.

@@ -15,7 +15,7 @@ cargo build --release                                # → target/release/dynami
 ## Writing a spec
 
 Read `skills/dynamic-diagram/SKILL.md` first (authoring steps, geometry
-rules, icon tiers); full field reference in `docs/SPEC.md`. Prefer structural
+rules, icon tiers); full field reference in `docs/SPEC.md` (local, git-ignored). Prefer structural
 layout for new v1 specs. Verify the PNG and representative animation frames;
 diagnose collisions against the prepared layout and the spec's intent.
 
@@ -52,11 +52,11 @@ diagnose collisions against the prepared layout and the spec's intent.
   `emit_icon` (svg.rs). Don't re-scale per call site.
 - Layout metrics live in `Theme`; change them there, then measure node boxes.
   `canvas.min_height` adds room; `canvas.scale` scales the whole presentation;
-  raster `--density` affects pixel sampling only. See `docs/SPEC.md`.
+  raster `--density` affects pixel sampling only. See `docs/SPEC.md` (local, git-ignored).
 
 ## Related project
 
-`../pi-diagram` is the personal (not npm-published) pi extension driving this
-engine (tool `diagram`, `/diagram`). Engine resolution: `DYNAMIC_DIAGRAM_BIN`
+`../pi-diagram` is the pi extension driving this engine (tool `diagram`, `/diagram`;
+npm: `@tzssangglass/pi-diagram`). Engine resolution: `DYNAMIC_DIAGRAM_BIN`
 → vendored `vendor/bin` (postinstall minisign-verified download from this
 repo's Releases) → PATH (`cargo binstall dynamic-diagram`).

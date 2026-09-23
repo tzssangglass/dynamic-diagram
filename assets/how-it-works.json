@@ -1,0 +1,38 @@
+{
+  "header": "DYNAMIC-DIAGRAM IN PI ·· SPEC → PNG, IN-PROCESS",
+  "duration": 8000,
+  "anim": "seq",
+  "nodes": [
+    { "id": "pi",     "label": "pi",            "icon": "terminal",       "x": 9,  "y": 26, "status": "user: draw X" },
+    { "id": "ext",    "label": "pi-diagram",    "icon": "ti/puzzle",      "x": 32, "y": 26, "status": "diagram tool" },
+    { "id": "engine", "label": "dynamic-diagram", "icon": "ti/cpu",       "x": 60, "y": 26, "status": "one static binary" },
+    { "id": "chat",   "label": "pi chat",       "icon": "ti/photo",       "x": 89, "y": 26, "status": "inline image" },
+    { "id": "parse",  "label": "spec.rs",       "icon": "ti/braces",      "x": 28, "y": 74, "status": "JSON → Doc" },
+    { "id": "layout", "label": "layout.rs",     "icon": "ti/layout-grid", "x": 48, "y": 74, "status": "taffy measure" },
+    { "id": "svg",    "label": "svg.rs",        "icon": "ti/vector",      "x": 66, "y": 74, "status": "Frame(t) → SVG" },
+    { "id": "raster", "label": "raster.rs",     "icon": "ti/grid-dots",   "x": 85, "y": 74, "status": "resvg → PNG" }
+  ],
+  "links": [
+    { "from": "pi", "to": "ext", "arrow": "end" },
+    { "from": "ext", "to": "engine", "arrow": "end" },
+    { "from": "engine", "to": "parse", "arrow": "end" },
+    { "from": "parse", "to": "layout", "arrow": "end" },
+    { "from": "layout", "to": "svg", "arrow": "end" },
+    { "from": "svg", "to": "raster", "arrow": "end" },
+    { "from": "raster", "to": "chat", "arrow": "end" }
+  ],
+  "packets": [
+    { "label": "prompt",   "from": "pi", "to": "ext" },
+    { "label": "spec.json", "from": "ext", "to": "engine" },
+    { "label": "Doc",      "from": "engine", "to": "parse" },
+    { "label": "boxes",    "from": "parse", "to": "layout" },
+    { "label": "Frame(t)", "from": "layout", "to": "svg" },
+    { "label": "SVG",      "from": "svg", "to": "raster" },
+    { "label": "PNG · frames", "from": "raster", "to": "chat" }
+  ],
+  "texts": [
+    { "text": "engine internals", "x": 56, "y": 50, "dim": true }
+  ],
+  "badge": "8s loop",
+  "note": "pi's diagram tool resolves the dynamic-diagram binary and hands it a JSON spec; the engine parses, measures, renders and rasters it in-process, and the PNG lands inline in the chat."
+}

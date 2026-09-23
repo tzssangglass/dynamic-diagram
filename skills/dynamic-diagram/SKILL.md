@@ -75,8 +75,7 @@ Node boxes and page bands use measured text and shared theme metrics.
 Common aliases: `server→dns`, `phone|client|smartphone→ti/device-mobile`, `firewall→security`,
 `database|db→storage`, `globe→public`, `switch→settings_ethernet`.
 
-Full field reference: `docs/SPEC.md` in the engine repo, or re-read this file
-anywhere with `dynamic-diagram skill`.
+This file is the full authoring reference; re-read it anywhere with `dynamic-diagram skill`.
 
 Beyond the sugar, the universal escape hatch is **keyframe timelines**: any
 property (x, y, status, text, badge, visibility) accepts `[[t, v], ...]` —

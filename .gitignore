@@ -3,3 +3,5 @@
 /outputs
 /.perf
 /signing.key
+/docs
+/examples/*.png

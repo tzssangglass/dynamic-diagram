@@ -12,7 +12,7 @@ keywords = ["diagram", "svg", "rendering", "animation", "visualization"]
 categories = ["command-line-utilities", "graphics"]
 # src/assets/ is compile-time embedded (include_str!) — never exclude it.
 # sims/ is a repo-local test corpus (runtime-loaded) — deliberately not shipped.
-exclude = ["/outputs", "/.perf", "/.diagrams", "/.github", "/docs", "/sims"]
+exclude = ["/outputs", "/.perf", "/.diagrams", "/.github", "/docs", "/sims", "/assets"]
 
 [package.metadata.wix]
 upgrade-guid = "28673494-EE97-4278-8EED-E3B86694673A"
