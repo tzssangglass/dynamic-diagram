@@ -33,33 +33,6 @@ cargo install --locked dynamic-diagram
 Also on npm (`npm install -g dynamic-diagram`) and Homebrew
 (`brew install tzssangglass/tap/dynamic-diagram`).
 
-## Verifying releases
-
-Every release asset ships a minisign signature (`<file>.sig`), and CI emits
-GitHub artifact attestations (Sigstore build provenance):
-
-```sh
-# minisign signature (any asset — archives, msi, sha256.sum, installers):
-minisign -Vm dynamic-diagram-x86_64-unknown-linux-musl.tar.gz \
-  -P RWQH1BCw/M2EcXI5QIwhjjTou5lMmXyB+hoQ9qlRLr5kuekgWjCAWaRw
-
-# build provenance (requires the gh CLI):
-gh attestation verify dynamic-diagram-x86_64-unknown-linux-musl.tar.gz \
-  --repo tzssangglass/dynamic-diagram
-
-# cargo binstall verifies signatures automatically (pubkey pinned in crate metadata):
-cargo binstall dynamic-diagram
-
-# release tags are signed:
-git tag --verify v0.2.0
-```
-
-The signing public key is [`signing.pub`](signing.pub); the private key
-(`signing.key`, gitignored) stays offline. crates.io / npm / Homebrew verify
-integrity in-band (registry checksums, formula checksums) on every install.
-Windows MSI Authenticode signing requires a purchased certificate and is not
-enabled; every other asset is signed.
-
 ## The spec format (`dynamic-diagram spec <file.json> [svg|png|kitty]`)
 
 ```json
@@ -180,7 +153,7 @@ the binary.
    ~/.local/bin/` (or export `DYNAMIC_DIAGRAM_BIN`).
 2. **Expose the skill to the agent:**
    - pi: `cp -r skills/dynamic-diagram ~/.pi/agent/skills/`
-     (or via the [pi-diagram](../pi-diagram) extension, which also registers
+     (or via the [pi-diagram](https://github.com/tzssangglass/pi-diagram) extension, which also registers
      a `diagram` tool)
    - Claude Code: copy into the project's `.claude/skills/`, or work inside
      this repo — `CLAUDE.md` imports `AGENTS.md`
@@ -191,6 +164,5 @@ the binary.
    reading one command's output.
 
 Authoring steps, geometry rules, and icon tiers are in
-`skills/dynamic-diagram/SKILL.md` — print it anywhere with `dynamic-diagram skill`. The [pi-diagram]
-(../pi-diagram) extension embeds the compact spec doc in its tool description,
+`skills/dynamic-diagram/SKILL.md` — print it anywhere with `dynamic-diagram skill`. The [pi-diagram](https://github.com/tzssangglass/pi-diagram) extension embeds the compact spec doc in its tool description,
 so LLMs using that tool need no other files.
